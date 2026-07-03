@@ -274,21 +274,30 @@ func (s *Supervisor) acceptClients() {
 }
 
 func (s *Supervisor) serveClient(cl *client) {
-	go cl.writeLoop()
-
-	// The attach client sends its terminal size immediately on connect. Apply
-	// it BEFORE registering so the screen snapshot is rendered at the client's
-	// size — a snapshot at the wrong width wraps every row and scrolls the
-	// content away. Non-interactive clients that send nothing just hit the
-	// short deadline and get the current-size snapshot.
+	// The first frame is a peek request (one-shot preview, no attach) or the
+	// attach client's terminal size. Read it before starting the write loop so
+	// a peek can reply synchronously and close. Applying the size BEFORE
+	// registering makes the screen snapshot render at the client's width — a
+	// wrong-width snapshot wraps every row and scrolls content away.
 	cl.conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-	if f, err := wire.Read(cl.conn); err == nil {
-		if !s.handleClientFrame(f) {
+	first, firstErr := wire.Read(cl.conn)
+	cl.conn.SetReadDeadline(time.Time{})
+
+	if firstErr == nil && first.Type == wire.TypeSnapshotReq {
+		var r wire.Resize
+		_ = first.DecodeJSON(&r)
+		_ = wire.Write(cl.conn, wire.TypeSnapshot, []byte(s.hub.preview(int(r.Rows), int(r.Cols))))
+		cl.close() // peek is never registered as a client
+		return
+	}
+
+	go cl.writeLoop()
+	if firstErr == nil {
+		if !s.handleClientFrame(first) {
 			cl.close()
 			return
 		}
 	}
-	cl.conn.SetReadDeadline(time.Time{})
 
 	s.hub.register(cl, s.altScreen.Load())
 	defer s.hub.remove(cl)

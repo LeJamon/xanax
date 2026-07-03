@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 
@@ -143,6 +144,29 @@ func Kill(socketPath string) error {
 	}
 	defer conn.Close()
 	return wire.WriteJSON(conn, wire.TypeKill, struct{}{})
+}
+
+// Peek fetches a one-shot plain-text preview of a session's current screen
+// without attaching. Returns "" on any error (dead supervisor, timeout).
+func Peek(socketPath string, rows, cols int) string {
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	if wire.WriteJSON(conn, wire.TypeSnapshotReq, wire.Resize{Rows: uint16(rows), Cols: uint16(cols)}) != nil {
+		return ""
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for {
+		f, err := wire.Read(conn)
+		if err != nil {
+			return ""
+		}
+		if f.Type == wire.TypeSnapshot {
+			return string(f.Payload)
+		}
+	}
 }
 
 // Alive reports whether a session's supervisor is accepting connections.

@@ -162,6 +162,15 @@ func (h *hub) clientCount() int {
 	return len(h.clients)
 }
 
+// preview renders a plain-text preview of the current screen (peek). The VT
+// emulator has its own lock, so this is safe without holding h.mu.
+func (h *hub) preview(maxRows, maxCols int) string {
+	if h.screen == nil {
+		return ""
+	}
+	return h.screen.previewText(maxRows, maxCols)
+}
+
 // fanout must be called with mu held.
 func (h *hub) fanout(f wire.Frame) {
 	for cl := range h.clients {

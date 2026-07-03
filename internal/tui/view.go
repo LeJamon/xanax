@@ -19,6 +19,10 @@ func (m model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.renderList())
 	b.WriteString("\n")
+	if p := m.renderPreview(); p != "" {
+		b.WriteString(p)
+		b.WriteString("\n")
+	}
 	switch {
 	case m.renaming:
 		b.WriteString(m.renderRename())
@@ -30,6 +34,17 @@ func (m model) View() string {
 	b.WriteString("\n")
 	b.WriteString(m.footer())
 	return b.String()
+}
+
+// renderPreview shows a peek of the selected session's screen when one is
+// selected and a preview has been fetched.
+func (m model) renderPreview() string {
+	if m.onComposer || m.previewText == "" || m.previewID != m.selectedID() {
+		return ""
+	}
+	label := mutedStyle.Render("Preview  ·  " + m.previewID[:min(8, len(m.previewID))])
+	body := lipgloss.NewStyle().Foreground(colMuted).Render(m.previewText)
+	return label + "\n" + hRules(colMuted, m.width).Render(body)
 }
 
 func (m model) header() string {

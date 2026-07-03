@@ -301,6 +301,63 @@ func TestNotifiesOnCompletion(t *testing.T) {
 	}
 }
 
+// TestPeekReturnsPreviewWithoutDisturbing verifies a snapshot request gets a
+// plain-text preview and does not register as a client (an attached client
+// keeps receiving live output undisturbed).
+func TestPeekReturnsPreviewWithoutDisturbing(t *testing.T) {
+	paths := testPaths(t)
+	st, err := store.Open(paths.DBFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	sess := &session.Session{
+		ID: "peek01", Title: "peek", RepoPath: t.TempDir(),
+		Harness: "generic", Status: session.StatusStarting,
+	}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	h := config.Harness{Adapter: config.AdapterGeneric, Command: "sh",
+		Args: []string{"-c", `printf '\033[2;1HPEEKABLE-CONTENT'; sleep 300`}}
+
+	go supervisor.Run(supervisor.Options{
+		Session: sess, Harness: h, Paths: paths, Store: st, Logger: quietLogger(),
+	})
+	sock := filepath.Join(paths.SocketDir, sess.ID+".sock")
+	waitAlive(t, sock)
+	time.Sleep(400 * time.Millisecond)
+
+	// Peek.
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	wire.WriteJSON(conn, wire.TypeSnapshotReq, wire.Resize{Rows: 8, Cols: 60})
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	f, err := wire.Read(conn)
+	if err != nil {
+		t.Fatalf("peek read: %v", err)
+	}
+	if f.Type != wire.TypeSnapshot {
+		t.Fatalf("peek reply type = %d, want snapshot", f.Type)
+	}
+	if !bytes.Contains(f.Payload, []byte("PEEKABLE-CONTENT")) {
+		t.Errorf("preview missing content; got %q", f.Payload)
+	}
+	if bytes.Contains(f.Payload, []byte("\x1b")) {
+		t.Errorf("preview should be plain text; got %q", f.Payload)
+	}
+
+	// Clean up.
+	k, _ := net.Dial("unix", sock)
+	wire.WriteJSON(k, wire.TypeKill, struct{}{})
+	k.Close()
+	time.Sleep(200 * time.Millisecond)
+}
+
 func TestSupervisorCleanCompletion(t *testing.T) {
 	paths := testPaths(t)
 	st, err := store.Open(paths.DBFile)

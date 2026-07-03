@@ -3,6 +3,7 @@ package supervisor
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/hinshun/vt10x"
 )
@@ -104,6 +105,41 @@ func writeSGR(b *bytes.Buffer, g vt10x.Glyph) {
 	writeSGRColor(b, g.FG, false)
 	writeSGRColor(b, g.BG, true)
 	b.WriteByte('m')
+}
+
+// previewText renders a plain-text (no color) preview of the most recent
+// activity: the block of rows ending at the last non-empty row, at most
+// maxRows tall and maxCols wide. Used for the dashboard's peek pane, where a
+// small colorless excerpt is enough and trivially fits any width.
+func (s *screen) previewText(maxRows, maxCols int) string {
+	s.term.Lock()
+	defer s.term.Unlock()
+
+	cols, rows := s.term.Size()
+	if maxCols <= 0 || maxCols > cols {
+		maxCols = cols
+	}
+	lines := make([]string, rows)
+	lastNonEmpty := -1
+	for y := range rows {
+		var sb strings.Builder
+		for x := range maxCols {
+			r := s.term.Cell(x, y).Char
+			if r == 0 {
+				r = ' '
+			}
+			sb.WriteRune(r)
+		}
+		lines[y] = strings.TrimRight(sb.String(), " ")
+		if lines[y] != "" {
+			lastNonEmpty = y
+		}
+	}
+	if lastNonEmpty < 0 {
+		return ""
+	}
+	start := max(0, lastNonEmpty-maxRows+1)
+	return strings.Join(lines[start:lastNonEmpty+1], "\n")
 }
 
 // writeSGRColor appends the color clause. vt10x packs colors as: 0-255 palette,

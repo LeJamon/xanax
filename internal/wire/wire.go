@@ -27,6 +27,10 @@ const (
 	TypeResize Type = 6 // JSON Resize
 	TypeKill   Type = 7 // request termination (empty payload)
 	TypeDetach Type = 8 // client leaving (empty payload; closing also works)
+
+	// Peek: a one-shot preview without attaching.
+	TypeSnapshotReq Type = 9  // client→supervisor, JSON Resize (max rows/cols)
+	TypeSnapshot    Type = 10 // supervisor→client, plain-text preview bytes
 )
 
 // MaxFrame caps a single payload to guard against corruption/DoS.

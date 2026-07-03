@@ -64,6 +64,35 @@ func TestSnapshotAfterAltScreenAndClear(t *testing.T) {
 	}
 }
 
+func TestPreviewText(t *testing.T) {
+	sc := newScreen(40, 10)
+	sc.write([]byte("\x1b[3;1HLINE-A\x1b[4;1HLINE-B\x1b[5;1HLINE-C"))
+	got := sc.previewText(2, 40) // last 2 non-empty rows
+	if got != "LINE-B\nLINE-C" {
+		t.Errorf("previewText = %q, want last two lines", got)
+	}
+	// Plain text only — no escape sequences.
+	if bytes.Contains([]byte(got), []byte("\x1b")) {
+		t.Errorf("preview leaked escape sequences: %q", got)
+	}
+}
+
+func TestPreviewTextTruncatesWidth(t *testing.T) {
+	sc := newScreen(40, 5)
+	sc.write([]byte("\x1b[1;1H0123456789ABCDEFGHIJ"))
+	got := sc.previewText(1, 6)
+	if got != "012345" {
+		t.Errorf("previewText width-limited = %q, want 012345", got)
+	}
+}
+
+func TestPreviewEmptyScreen(t *testing.T) {
+	sc := newScreen(20, 5)
+	if got := sc.previewText(4, 20); got != "" {
+		t.Errorf("blank screen preview = %q, want empty", got)
+	}
+}
+
 func TestSnapshotResize(t *testing.T) {
 	sc := newScreen(10, 3)
 	sc.write([]byte("AB"))

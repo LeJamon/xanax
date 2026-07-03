@@ -61,10 +61,15 @@ type model struct {
 	gitCache     map[string]gitInfo // live branch/PR per repo path
 	gitPollCount int                // gates the slower PR refresh
 
+	previewID   string // session id the current preview belongs to
+	previewText string // last fetched preview of the selected session
+
 	width, height int
 	status        string
 	err           error
 }
+
+const previewRows = 8
 
 // harness returns the currently selected harness for new sessions.
 func (m model) harness() string {
@@ -195,7 +200,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		return m, tea.Batch(m.reload(), tickCmd())
+		return m, tea.Batch(m.reload(), tickCmd(), m.previewCmd())
+
+	case previewMsg:
+		if msg.id == m.selectedID() { // ignore stale results after moving
+			m.previewID, m.previewText = msg.id, msg.text
+		}
+		return m, nil
 
 	case gitTickMsg:
 		// Refresh PR numbers only every 12th tick (~60 s); branches every tick.
@@ -250,30 +261,42 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // moveUp/moveDown treat the prompt box as the row just below the last session.
 func (m model) moveUp() (tea.Model, tea.Cmd) {
+	prev := m.selectedID()
 	if m.onComposer {
 		if len(m.sessions) > 0 {
 			m.onComposer = false
 			m.cursor = len(m.sessions) - 1
 			m.composer.Blur()
 		}
-		return m, nil
-	}
-	if m.cursor > 0 {
+	} else if m.cursor > 0 {
 		m.cursor--
 	}
-	return m, nil
+	return m.afterMove(prev, nil)
 }
 
 func (m model) moveDown() (tea.Model, tea.Cmd) {
+	prev := m.selectedID()
 	if m.onComposer {
 		return m, nil // already the bottom row
 	}
+	var extra tea.Cmd
 	if m.cursor < len(m.sessions)-1 {
 		m.cursor++
-		return m, nil
+	} else {
+		m.onComposer = true
+		extra = m.composer.Focus()
 	}
-	m.onComposer = true
-	return m, m.composer.Focus()
+	return m.afterMove(prev, extra)
+}
+
+// afterMove clears the stale preview and requests a fresh one when the selected
+// session changed, batching any extra command.
+func (m model) afterMove(prevID string, extra tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.selectedID() == prevID {
+		return m, extra
+	}
+	m.previewText, m.previewID = "", ""
+	return m, tea.Batch(extra, m.previewCmd())
 }
 
 // updateComposerKey runs while the prompt box is selected. Enter launches a
@@ -485,6 +508,33 @@ func (m model) current() *session.Session {
 		return nil
 	}
 	return m.sessions[m.cursor]
+}
+
+// selectedID is the id of the selected session, or "" when the prompt box (or
+// nothing) is selected.
+func (m model) selectedID() string {
+	if s := m.current(); s != nil {
+		return s.ID
+	}
+	return ""
+}
+
+// previewCmd fetches a peek of the selected session's screen (nothing while
+// the prompt box is selected). Runs off the main loop.
+func (m model) previewCmd() tea.Cmd {
+	s := m.current()
+	if s == nil {
+		return nil
+	}
+	id, sock, cols := s.ID, filepath.Join(m.deps.SocketDir, s.ID+".sock"), m.width-4
+	return func() tea.Msg {
+		return previewMsg{id: id, text: attach.Peek(sock, previewRows, cols)}
+	}
+}
+
+type previewMsg struct {
+	id   string
+	text string
 }
 
 func (m model) alive(id string) bool {
