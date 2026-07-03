@@ -20,6 +20,13 @@ func (m model) View() string {
 	}
 	bottom := m.inputBlock() + "\n" + m.footer()
 
+	// Clamp every line to the terminal width so nothing soft-wraps. lipgloss
+	// measures newline-delimited lines, so a wrapped header (long path, error,
+	// or filter) or footer hint would make the gap math below undercount the
+	// real rows and push the prompt off the bottom of the screen.
+	fit := lipgloss.NewStyle().MaxWidth(m.width)
+	top, bottom = fit.Render(top), fit.Render(bottom)
+
 	// Pin the prompt box and footer to the bottom of the screen, filling the gap
 	// between the session list and the input so a short list doesn't leave the
 	// composer floating mid-screen. When content is taller than the terminal the
@@ -81,27 +88,47 @@ func (m model) header() string {
 		counts += "   " + errStyle.Render(m.err.Error())
 	}
 
-	text := title + "\n" + mutedStyle.Render(m.path) + "\n" + counts
+	lines := []string{title}
+	if m.path != "" { // omit the path row entirely rather than show a blank line
+		lines = append(lines, mutedStyle.Render(m.path))
+	}
+	lines = append(lines, counts)
+	text := strings.Join(lines, "\n")
 	return lipgloss.JoinHorizontal(lipgloss.Top, logo, "   ", text)
 }
 
-// counts renders the three session tallies — awaiting input, working, and
-// completed — always shown (even at zero) with each number in its status color.
+// counts renders the session tallies. The three primary buckets — awaiting
+// input, working, completed — are always shown (even at zero) with each number
+// in its status color; cancelled, failed, and other are appended only when
+// non-empty, so the header always reconciles with the list below without
+// cluttering the common case.
 func (m model) counts() string {
-	var c [3]int
+	var c [6]int // indexed by groupRank: waiting, running, completed, cancelled, failed, other
 	for _, s := range m.sessions {
-		if r := groupRank(s.Status); r < len(c) {
-			c[r]++
+		r := groupRank(s.Status)
+		if r >= len(c) {
+			r = len(c) - 1 // fold any unexpected rank into "other" rather than drop it
 		}
+		c[r]++
 	}
 	seg := func(n int, col lipgloss.Color, label string) string {
 		return lipgloss.NewStyle().Foreground(col).Render(fmt.Sprintf("%d", n)) +
 			mutedStyle.Render(" "+label)
 	}
 	dot := mutedStyle.Render("  ·  ")
-	return seg(c[0], colWaiting, "awaiting input") + dot +
+	out := seg(c[0], colWaiting, "awaiting input") + dot +
 		seg(c[1], colRunning, "working") + dot +
 		seg(c[2], colCompleted, "completed")
+	if c[3] > 0 {
+		out += dot + seg(c[3], colCancelled, "cancelled")
+	}
+	if c[4] > 0 {
+		out += dot + seg(c[4], colFailed, "failed")
+	}
+	if c[5] > 0 {
+		out += dot + seg(c[5], colMuted, "other")
+	}
+	return out
 }
 
 func (m model) renderList() string {
