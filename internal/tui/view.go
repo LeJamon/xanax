@@ -93,12 +93,41 @@ func (m model) renderRow(s *session.Session, selected bool) string {
 		content += mutedStyle.Render("  — " + truncate(s.StatusDetail, 40))
 	}
 
+	// Live git context (branch · #PR), right-aligned against the row edge.
+	content = padRight(content, m.gitSuffix(s.RepoPath), m.width-2)
+
 	if !selected {
 		// Align with the ruled row's interior (padding-left = 1 col).
 		return " " + content
 	}
 	// The selected session gets full-width top+bottom rules in the accent color.
 	return hRules(colAccent, m.width).Render(content)
+}
+
+// gitSuffix renders " branch · #pr" for a repo, or "" when unknown.
+func (m model) gitSuffix(repo string) string {
+	gi := m.gitCache[repo]
+	if gi.branch == "" {
+		return ""
+	}
+	out := branchStyle.Render(" " + gi.branch)
+	if gi.pr != "" {
+		out += mutedStyle.Render(" · ") + prStyle.Render("#"+gi.pr)
+	}
+	return out
+}
+
+// padRight places right at the row's right edge, or drops it when there is no
+// room (both operands may contain ANSI styling, so widths are measured).
+func padRight(left, right string, width int) string {
+	if right == "" {
+		return left
+	}
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		return left
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
 // renderComposer draws the always-on prompt block: a label plus the input

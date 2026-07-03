@@ -24,6 +24,8 @@ var (
 	footerStyle = lipgloss.NewStyle().Foreground(colMuted)
 	errStyle    = lipgloss.NewStyle().Foreground(colFailed).Bold(true)
 	fieldStyle  = lipgloss.NewStyle().Foreground(colMuted)
+	branchStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // cyan
+	prStyle     = lipgloss.NewStyle().Foreground(colCompleted)        // green
 )
 
 // hRules wraps content with full-width top and bottom horizontal rules only

@@ -58,6 +58,9 @@ type model struct {
 	renameInput textinput.Model
 	renameID    string
 
+	gitCache     map[string]gitInfo // live branch/PR per repo path
+	gitPollCount int                // gates the slower PR refresh
+
 	width, height int
 	status        string
 	err           error
@@ -126,7 +129,7 @@ func harnessNames(cfg *config.Config) []string {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.reload(), tickCmd(), textarea.Blink)
+	return tea.Batch(m.reload(), tickCmd(), gitTickCmd(), textarea.Blink)
 }
 
 func (m model) reload() tea.Cmd {
@@ -157,6 +160,12 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
+type gitTickMsg struct{}
+
+func gitTickCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return gitTickMsg{} })
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -166,6 +175,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case sessionsMsg:
+		firstLoad := m.gitCache == nil && len(msg.sessions) > 0
 		m.sessions, m.err = msg.sessions, msg.err
 		if len(m.sessions) == 0 {
 			m.cursor = 0
@@ -176,10 +186,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.cursor > len(m.sessions)-1 {
 			m.cursor = len(m.sessions) - 1
 		}
+		if firstLoad {
+			// Show branches promptly rather than waiting for the 5 s git tick
+			// (branches only — the slower gh PR lookup stays on the tick).
+			m.gitCache = make(map[string]gitInfo)
+			return m, gitPollCmd(uniqueRepos(m), false)
+		}
 		return m, nil
 
 	case tickMsg:
 		return m, tea.Batch(m.reload(), tickCmd())
+
+	case gitTickMsg:
+		// Refresh PR numbers only every 12th tick (~60 s); branches every tick.
+		pollPR := m.gitPollCount%12 == 0
+		m.gitPollCount++
+		return m, tea.Batch(gitPollCmd(uniqueRepos(m), pollPR), gitTickCmd())
+
+	case gitInfoMsg:
+		if m.gitCache == nil {
+			m.gitCache = make(map[string]gitInfo)
+		}
+		for repo, gi := range msg.infos {
+			if !msg.polledPR {
+				gi.pr = m.gitCache[repo].pr // preserve the cached PR between PR polls
+			}
+			m.gitCache[repo] = gi
+		}
+		return m, nil
 
 	case actionDoneMsg:
 		m.status = msg.status
