@@ -42,7 +42,7 @@ type harnessSpec struct {
 // newFormInputs builds the blank add-harness inputs.
 func newFormInputs() []textinput.Model {
 	ins := make([]textinput.Model, numFields)
-	placeholders := [numFields]string{"goose", "goose run", "--message", "e.g. 120", `e.g. \(y/n\)`}
+	placeholders := [numFields]string{"goose", "goose run", "e.g. --message (blank = type it in)", "e.g. 120", `e.g. \(y/n\)`}
 	for i := range ins {
 		ti := textinput.New()
 		ti.Prompt = ""

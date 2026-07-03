@@ -34,6 +34,8 @@ type piAdapter struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
+	closeOnce sync.Once
+
 	mu  sync.Mutex
 	ref string
 }
@@ -99,14 +101,19 @@ func (a *piAdapter) SessionRef() string {
 	return a.ref
 }
 
+// Close is idempotent: the supervisor calls it both explicitly (to stop the
+// state channel before waiting) and via a deferred catch-all, so a second call
+// must not re-close a.states.
 func (a *piAdapter) Close() error {
-	a.cancel()
-	if a.listener != nil {
-		a.listener.Close()
-	}
-	a.wg.Wait()
-	close(a.states)
-	_ = os.Remove(a.socketPath)
+	a.closeOnce.Do(func() {
+		a.cancel()
+		if a.listener != nil {
+			a.listener.Close()
+		}
+		a.wg.Wait()
+		close(a.states)
+		_ = os.Remove(a.socketPath)
+	})
 	return nil
 }
 

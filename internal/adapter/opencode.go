@@ -45,6 +45,8 @@ type opencodeAdapter struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
+	closeOnce sync.Once
+
 	mu  sync.Mutex
 	ref string
 }
@@ -94,10 +96,15 @@ func (a *opencodeAdapter) SessionRef() string {
 	return a.ref
 }
 
+// Close is idempotent: the supervisor calls it both explicitly (to stop the
+// state channel before waiting) and via a deferred catch-all, so a second call
+// must not re-close a.states.
 func (a *opencodeAdapter) Close() error {
-	a.cancel()
-	a.wg.Wait()
-	close(a.states)
+	a.closeOnce.Do(func() {
+		a.cancel()
+		a.wg.Wait()
+		close(a.states)
+	})
 	return nil
 }
 
