@@ -20,6 +20,7 @@ import (
 
 	"xanax/internal/adapter"
 	"xanax/internal/config"
+	"xanax/internal/notify"
 	"xanax/internal/ringbuf"
 	"xanax/internal/session"
 	"xanax/internal/store"
@@ -41,13 +42,18 @@ type Options struct {
 	Store   *store.Store
 	Logger  *slog.Logger
 	Resume  bool
+	Notify  bool
+	// NotifyFn delivers a desktop notification; nil defaults to notify.Send.
+	// Injectable for tests.
+	NotifyFn func(title, body string)
 }
 
 // Supervisor is a single session's owner process state.
 type Supervisor struct {
-	opts    Options
-	log     *slog.Logger
-	adapter adapter.Adapter
+	opts     Options
+	log      *slog.Logger
+	adapter  adapter.Adapter
+	notifyFn func(title, body string)
 
 	ptmx *os.File
 	cmd  *exec.Cmd
@@ -87,9 +93,13 @@ func Run(opts Options) (int, error) {
 		opts.Logger = slog.Default()
 	}
 	s := &Supervisor{
-		opts:   opts,
-		log:    opts.Logger.With("session", opts.Session.ID),
-		exited: make(chan struct{}),
+		opts:     opts,
+		log:      opts.Logger.With("session", opts.Session.ID),
+		notifyFn: opts.NotifyFn,
+		exited:   make(chan struct{}),
+	}
+	if s.notifyFn == nil {
+		s.notifyFn = func(title, body string) { _ = notify.Send(title, body) }
 	}
 	return s.run()
 }
@@ -336,6 +346,7 @@ func (s *Supervisor) watchState() {
 		return
 	}
 	s.stateInfo.had = true
+	prev := session.StatusRunning
 	for ev := range ch {
 		s.stateInfo.saw = true
 		s.stateInfo.last = ev.Kind
@@ -350,6 +361,8 @@ func (s *Supervisor) watchState() {
 			s.log.Warn("set status failed", "err", err)
 		}
 		s.hub.broadcastState(wire.State{Status: string(status), Detail: detail})
+		s.raiseNotification(prev, status, detail)
+		prev = status
 	}
 }
 
@@ -438,6 +451,9 @@ func (s *Supervisor) finish(status session.Status, exitCode int) {
 	if s.hub != nil {
 		s.hub.broadcastExit(wire.Exit{Status: string(status), ExitCode: exitCode})
 	}
+	// Notify on terminal outcome; running is the implicit "prev" so a terminal
+	// state is always a transition. Cancelled is user-initiated → stays quiet.
+	s.raiseNotification(session.StatusRunning, status, s.opts.Session.StatusDetail)
 	s.log.Info("session ended", "status", status, "exit_code", exitCode)
 }
 

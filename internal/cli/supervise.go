@@ -47,6 +47,7 @@ func newSuperviseCmd() *cobra.Command {
 				Store:   st,
 				Logger:  logger,
 				Resume:  resume,
+				Notify:  e.cfg.Notifications,
 			})
 			if err != nil {
 				logger.Error("supervisor exited with error", "err", err)

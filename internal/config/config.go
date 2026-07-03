@@ -35,6 +35,7 @@ type Config struct {
 	// mode (SPEC.md §10). Arrow keys and Escape are reserved by the harness TUIs.
 	InteractExitKey string             `toml:"interact_exit_key"`
 	AutoResume      bool               `toml:"auto_resume"`
+	Notifications   bool               `toml:"notifications"`
 	Harnesses       map[string]Harness `toml:"harness"`
 }
 
@@ -79,6 +80,7 @@ func Default() *Config {
 		DefaultHarness:  "opencode",
 		InteractExitKey: `ctrl+\`,
 		AutoResume:      true,
+		Notifications:   true,
 		Harnesses: map[string]Harness{
 			"opencode": {Adapter: AdapterOpencode, Command: "opencode"},
 			"pi":       {Adapter: AdapterPi, Command: "pi"},
@@ -92,6 +94,7 @@ type fileConfig struct {
 	DefaultHarness  *string            `toml:"default_harness"`
 	InteractExitKey *string            `toml:"interact_exit_key"`
 	AutoResume      *bool              `toml:"auto_resume"`
+	Notifications   *bool              `toml:"notifications"`
 	Harness         map[string]Harness `toml:"harness"`
 }
 
@@ -126,6 +129,9 @@ func Load(path string) (*Config, error) {
 	}
 	if fc.AutoResume != nil {
 		cfg.AutoResume = *fc.AutoResume
+	}
+	if fc.Notifications != nil {
+		cfg.Notifications = *fc.Notifications
 	}
 	for name, fh := range fc.Harness {
 		merged := cfg.Harnesses[name]

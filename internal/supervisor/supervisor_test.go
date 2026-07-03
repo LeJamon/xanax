@@ -266,6 +266,41 @@ func TestAnswersTerminalQueriesBeforeAttach(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 }
 
+func TestNotifiesOnCompletion(t *testing.T) {
+	paths := testPaths(t)
+	st, err := store.Open(paths.DBFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	sess := &session.Session{
+		ID: "notif01", Title: "notify me", RepoPath: t.TempDir(),
+		Harness: "generic", Status: session.StatusStarting,
+	}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	h := config.Harness{Adapter: config.AdapterGeneric, Command: "sh", Args: []string{"-c", "exit 0"}}
+
+	type note struct{ title, body string }
+	notes := make(chan note, 4)
+	supervisor.Run(supervisor.Options{
+		Session: sess, Harness: h, Paths: paths, Store: st, Logger: quietLogger(),
+		Notify:   true,
+		NotifyFn: func(title, body string) { notes <- note{title, body} },
+	})
+
+	select {
+	case n := <-notes:
+		if !bytes.Contains([]byte(n.title), []byte("Completed")) {
+			t.Errorf("notification title = %q, want a Completed notice", n.title)
+		}
+	default:
+		t.Fatal("no completion notification fired")
+	}
+}
+
 func TestSupervisorCleanCompletion(t *testing.T) {
 	paths := testPaths(t)
 	st, err := store.Open(paths.DBFile)
