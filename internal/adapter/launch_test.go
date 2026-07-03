@@ -51,12 +51,55 @@ func TestGenericLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// No prompt-delivery config → prompt is not on the command line.
 	if spec.Path != "goose" || len(spec.Args) != 1 || spec.Args[0] != "session" || spec.Dir != "/repo" {
 		t.Errorf("unexpected launch spec: %+v", spec)
 	}
 	resume, _ := a.Launch(true)
 	if len(resume.Args) != 2 || resume.Args[1] != "--resume" {
 		t.Errorf("resume args = %v", resume.Args)
+	}
+}
+
+func TestGenericPromptDelivery(t *testing.T) {
+	// prompt_arg: appended as a flag value.
+	sess := &session.Session{ID: "g2", RepoPath: "/r", InitialPrompt: "do the thing"}
+	h := config.Harness{Adapter: config.AdapterGeneric, Command: "goose", Args: []string{"run"}, PromptArg: "--message"}
+	a, _ := New(sess, h, testDeps(t))
+	defer a.Close()
+	spec, _ := a.Launch(false)
+	if i := argIndex(spec.Args, "--message"); i < 0 || spec.Args[i+1] != "do the thing" {
+		t.Errorf("prompt_arg not applied: %v", spec.Args)
+	}
+
+	// prompt_positional: appended as the last argument.
+	h2 := config.Harness{Adapter: config.AdapterGeneric, Command: "aider", PromptPositional: true}
+	a2, _ := New(&session.Session{ID: "g3", RepoPath: "/r", InitialPrompt: "fix it"}, h2, testDeps(t))
+	defer a2.Close()
+	spec2, _ := a2.Launch(false)
+	if len(spec2.Args) == 0 || spec2.Args[len(spec2.Args)-1] != "fix it" {
+		t.Errorf("prompt_positional not applied: %v", spec2.Args)
+	}
+
+	// On resume, the prompt is never re-sent.
+	sess.HarnessSessionRef = ""
+	h.ResumeArgs = []string{"--continue"}
+	a3, _ := New(sess, h, testDeps(t))
+	defer a3.Close()
+	spec3, _ := a3.Launch(true)
+	if argIndex(spec3.Args, "--message") >= 0 {
+		t.Errorf("resume should not carry the prompt: %v", spec3.Args)
+	}
+}
+
+func TestGenericDoesNotMutateConfigArgs(t *testing.T) {
+	shared := []string{"run"}
+	h := config.Harness{Adapter: config.AdapterGeneric, Command: "x", Args: shared, PromptArg: "-m"}
+	a, _ := New(&session.Session{ID: "g4", RepoPath: "/r", InitialPrompt: "p"}, h, testDeps(t))
+	defer a.Close()
+	a.Launch(false)
+	if len(shared) != 1 {
+		t.Errorf("Launch mutated the shared config Args slice: %v", shared)
 	}
 }
 

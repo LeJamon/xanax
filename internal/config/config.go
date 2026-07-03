@@ -26,6 +26,14 @@ type Harness struct {
 	Args       []string          `toml:"args,omitempty"`
 	ResumeArgs []string          `toml:"resume_args,omitempty"`
 	Env        map[string]string `toml:"env,omitempty"`
+
+	// Prompt delivery for the generic adapter. PromptArg passes the initial
+	// prompt as a flag value (command … <prompt_arg> "<prompt>"). PromptPositional
+	// appends it as the last argument (command … "<prompt>"). With neither set
+	// the generic adapter falls back to typing the prompt into the PTY. Ignored
+	// by the native pi/opencode adapters.
+	PromptArg        string `toml:"prompt_arg,omitempty"`
+	PromptPositional bool   `toml:"prompt_positional,omitempty"`
 }
 
 // Config is the fully resolved configuration.
@@ -203,6 +211,12 @@ func Load(path string) (*Config, error) {
 		}
 		if fh.ResumeArgs != nil {
 			merged.ResumeArgs = fh.ResumeArgs
+		}
+		if fh.PromptArg != "" {
+			merged.PromptArg = fh.PromptArg
+		}
+		if fh.PromptPositional {
+			merged.PromptPositional = true
 		}
 		if len(fh.Env) > 0 {
 			if merged.Env == nil {

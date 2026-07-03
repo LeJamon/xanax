@@ -96,8 +96,8 @@ branch    = "6"    # git branch on rows
 [harness.goose]
 adapter     = "generic"
 command     = "goose"
-args        = ["session"]
-resume_args = ["session", "--resume"]
+prompt_arg  = "--message"          # pass the prompt as a flag (or prompt_positional = true)
+resume_args = ["session", "-c"]    # continue last session in this repo
 ```
 
 ## Layout
