@@ -44,7 +44,11 @@ func (m model) header() string {
 	if counts[1] > 0 {
 		summary += mutedStyle.Render(fmt.Sprintf("  ·  %d running", counts[1]))
 	}
-	line := titleStyle.Render("xanax") + "   " + summary
+	line := titleStyle.Render("xanax")
+	if m.deps.Scope != "" {
+		line += mutedStyle.Render(" ▸ " + repoName(m.deps.Scope))
+	}
+	line += "   " + summary
 	if m.err != nil {
 		line += "   " + errStyle.Render(m.err.Error())
 	}

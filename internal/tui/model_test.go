@@ -249,7 +249,7 @@ func TestTabOpensPickerAndSelectsHarness(t *testing.T) {
 		t.Errorf("harness = %q, want pi after picking", m.harness())
 	}
 	// The choice drives the launch args.
-	args := newSessionArgs(m.harness(), "do things", false)
+	args := newSessionArgs(m.harness(), "", "do things", false)
 	want := []string{"new", "--harness", "pi", "--no-attach", "--", "do things"}
 	if len(args) != len(want) {
 		t.Fatalf("args = %v", args)
@@ -339,7 +339,7 @@ func TestCtrlOLaunchesAndAttaches(t *testing.T) {
 }
 
 func TestNewSessionArgsAttach(t *testing.T) {
-	args := newSessionArgs("opencode", "-starts with dash", true)
+	args := newSessionArgs("opencode", "", "-starts with dash", true)
 	want := []string{"new", "--harness", "opencode", "--", "-starts with dash"}
 	if len(args) != len(want) {
 		t.Fatalf("args = %v", args)
@@ -349,6 +349,51 @@ func TestNewSessionArgsAttach(t *testing.T) {
 			t.Fatalf("args = %v, want %v", args, want)
 		}
 	}
+}
+
+func TestScopeFilter(t *testing.T) {
+	sessions := []*session.Session{
+		{ID: "1", RepoPath: "/home/u/proj"},
+		{ID: "2", RepoPath: "/home/u/proj/sub"},
+		{ID: "3", RepoPath: "/home/u/proj2"}, // sibling with shared prefix
+		{ID: "4", RepoPath: "/home/u/other"},
+	}
+	got := scopeFilter(sessions, "/home/u/proj")
+	ids := map[string]bool{}
+	for _, s := range got {
+		ids[s.ID] = true
+	}
+	if !ids["1"] || !ids["2"] {
+		t.Errorf("scope should include the repo and nested repos: %v", ids)
+	}
+	if ids["3"] {
+		t.Error("scope must not match a sibling sharing the path prefix (/home/u/proj2)")
+	}
+	if ids["4"] {
+		t.Error("scope must not match an unrelated repo")
+	}
+	// Empty scope keeps everything.
+	if len(scopeFilter(sessions, "")) != 4 {
+		t.Error("empty scope should keep all sessions")
+	}
+}
+
+func TestScopedLaunchTargetsRepo(t *testing.T) {
+	m := newTestModel(nil)
+	m.deps.Scope = "/work/repo"
+	args := newSessionArgs(m.harness(), m.deps.Scope, "do it", false)
+	if !argsContain(args, "--repo", "/work/repo") {
+		t.Errorf("scoped launch missing --repo /work/repo: %v", args)
+	}
+}
+
+func argsContain(args []string, flag, val string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == val {
+			return true
+		}
+	}
+	return false
 }
 
 func TestViewRendersWithoutPanic(t *testing.T) {

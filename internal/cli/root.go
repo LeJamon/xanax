@@ -2,7 +2,9 @@
 package cli
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -19,15 +21,23 @@ func Execute() error {
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "xanax",
+		Use:   "xanax [path]",
 		Short: "Session manager for autonomous AI coding agents",
 		Long: `Xanax launches, supervises, and reattaches to autonomous AI coding agent
-sessions (opencode, pi, ...) so they keep running when your terminal doesn't.`,
+sessions (opencode, pi, ...) so they keep running when your terminal doesn't.
+
+With no argument the dashboard shows every session. Given a path, it scopes to
+sessions whose repository is under that path and launches new ones there.`,
 		Version:       "0.1.0-dev",
+		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDashboard()
+			scope := ""
+			if len(args) == 1 {
+				scope = args[0]
+			}
+			return runDashboard(scope)
 		},
 	}
 	root.AddCommand(
@@ -65,12 +75,23 @@ func (e *env) openStore() (*store.Store, error) {
 }
 
 // runDashboard reconciles interrupted sessions (auto-resume) and launches the
-// dashboard TUI.
-func runDashboard() error {
+// dashboard TUI. A non-empty scope restricts it to sessions under that path.
+func runDashboard(scope string) error {
 	e, err := loadEnv()
 	if err != nil {
 		return err
 	}
+	if scope != "" {
+		abs, err := filepath.Abs(scope)
+		if err != nil {
+			return err
+		}
+		if fi, err := os.Stat(abs); err != nil || !fi.IsDir() {
+			return fmt.Errorf("scope %q is not a directory", scope)
+		}
+		scope = abs
+	}
+
 	st, err := e.openStore()
 	if err != nil {
 		return err
@@ -92,5 +113,6 @@ func runDashboard() error {
 		Cfg:       e.cfg,
 		SelfPath:  self,
 		SocketDir: e.paths.SocketDir,
+		Scope:     scope,
 	})
 }

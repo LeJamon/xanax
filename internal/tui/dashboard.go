@@ -29,6 +29,9 @@ type Deps struct {
 	Cfg       *config.Config
 	SelfPath  string // path to the xanax binary, for shelling out
 	SocketDir string
+	// Scope, when set, restricts the dashboard to sessions under this absolute
+	// path and launches new sessions there. Empty = all sessions, cwd launches.
+	Scope string
 }
 
 // model treats the session list and the prompt box as one navigable column.
@@ -127,10 +130,27 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) reload() tea.Cmd {
+	scope := m.deps.Scope
 	return func() tea.Msg {
 		s, err := m.deps.Store.ListSessions()
-		return sessionsMsg{sessions: grouped(s), err: err}
+		return sessionsMsg{sessions: grouped(scopeFilter(s, scope)), err: err}
 	}
+}
+
+// scopeFilter keeps sessions whose repo equals scope or lives under it. An
+// empty scope keeps everything.
+func scopeFilter(sessions []*session.Session, scope string) []*session.Session {
+	if scope == "" {
+		return sessions
+	}
+	prefix := scope + string(filepath.Separator)
+	out := sessions[:0:0]
+	for _, s := range sessions {
+		if s.RepoPath == scope || strings.HasPrefix(s.RepoPath, prefix) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func tickCmd() tea.Cmd {
@@ -365,10 +385,15 @@ func (m model) execKillRemove(s *session.Session) tea.Cmd {
 	}
 }
 
-// newSessionArgs builds the `xanax new` argv for the selected harness. "--"
-// stops flag parsing so prompts beginning with "-" are safe.
-func newSessionArgs(harness, prompt string, attach bool) []string {
+// newSessionArgs builds the `xanax new` argv for the selected harness. repo,
+// when set, targets a specific directory (the dashboard's scope); empty lets
+// `xanax new` default to cwd. "--" stops flag parsing so prompts beginning
+// with "-" are safe.
+func newSessionArgs(harness, repo, prompt string, attach bool) []string {
 	args := []string{"new", "--harness", harness}
+	if repo != "" {
+		args = append(args, "--repo", repo)
+	}
 	if !attach {
 		args = append(args, "--no-attach")
 	}
@@ -378,9 +403,9 @@ func newSessionArgs(harness, prompt string, attach bool) []string {
 // execNewBackground launches a new session in the selected harness without
 // attaching, so the user stays on the dashboard.
 func (m model) execNewBackground(prompt string) tea.Cmd {
-	h := m.harness()
+	h, repo := m.harness(), m.deps.Scope
 	return func() tea.Msg {
-		if err := exec.Command(m.deps.SelfPath, newSessionArgs(h, prompt, false)...).Run(); err != nil {
+		if err := exec.Command(m.deps.SelfPath, newSessionArgs(h, repo, prompt, false)...).Run(); err != nil {
 			return actionDoneMsg{status: "launch failed: " + err.Error()}
 		}
 		return actionDoneMsg{status: "launched " + h + ": " + truncate(prompt, 40)}
@@ -390,7 +415,7 @@ func (m model) execNewBackground(prompt string) tea.Cmd {
 // execNewAttach launches a new session and drops straight into the harness's
 // live window (its own input, native /command and @file syntax included).
 func (m model) execNewAttach(prompt string) tea.Cmd {
-	c := exec.Command(m.deps.SelfPath, newSessionArgs(m.harness(), prompt, true)...)
+	c := exec.Command(m.deps.SelfPath, newSessionArgs(m.harness(), m.deps.Scope, prompt, true)...)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
 			return actionDoneMsg{status: "launch failed: " + err.Error()}
