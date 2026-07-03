@@ -14,6 +14,9 @@ import (
 	"xanax/internal/tui"
 )
 
+// version is the xanax release, shown by `--version` and in the dashboard header.
+const version = "0.1.0-dev"
+
 // Execute runs the root command and returns its error for main to report.
 func Execute() error {
 	return newRootCmd().Execute()
@@ -28,7 +31,7 @@ sessions (opencode, pi, ...) so they keep running when your terminal doesn't.
 
 With no argument the dashboard shows every session. Given a path, it scopes to
 sessions whose repository is under that path and launches new ones there.`,
-		Version:       "0.1.0-dev",
+		Version:       version,
 		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -116,5 +119,6 @@ func runDashboard(scope string) error {
 		SocketDir:  e.paths.SocketDir,
 		ConfigPath: e.paths.ConfigFile,
 		Scope:      scope,
+		Version:    version,
 	})
 }

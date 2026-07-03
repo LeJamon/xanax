@@ -14,30 +14,44 @@ func (m model) View() string {
 	if m.width == 0 {
 		return "loading…"
 	}
-	var b strings.Builder
-	b.WriteString(m.header())
-	b.WriteString("\n\n")
-	b.WriteString(m.renderList())
-	b.WriteString("\n")
+	top := m.header() + "\n\n" + m.renderList()
 	if p := m.renderPreview(); p != "" {
-		b.WriteString(p)
-		b.WriteString("\n")
+		top += "\n" + p
 	}
+	bottom := m.inputBlock() + "\n" + m.footer()
+
+	// Clamp every line to the terminal width so nothing soft-wraps. lipgloss
+	// measures newline-delimited lines, so a wrapped header (long path, error,
+	// or filter) or footer hint would make the gap math below undercount the
+	// real rows and push the prompt off the bottom of the screen.
+	fit := lipgloss.NewStyle().MaxWidth(m.width)
+	top, bottom = fit.Render(top), fit.Render(bottom)
+
+	// Pin the prompt box and footer to the bottom of the screen, filling the gap
+	// between the session list and the input so a short list doesn't leave the
+	// composer floating mid-screen. When content is taller than the terminal the
+	// gap collapses to a single blank line and the top scrolls off, keeping the
+	// prompt in view.
+	gap := max(1, m.height-lipgloss.Height(top)-lipgloss.Height(bottom)+1)
+	return top + strings.Repeat("\n", gap) + bottom
+}
+
+// inputBlock renders whichever editor occupies the bottom prompt slot: the
+// always-present composer, or a modal editor (rename, harness form/picker,
+// filter) when one is open.
+func (m model) inputBlock() string {
 	switch {
 	case m.renaming:
-		b.WriteString(m.renderRename())
+		return m.renderRename()
 	case m.addingHarness:
-		b.WriteString(m.renderHarnessForm())
+		return m.renderHarnessForm()
 	case m.picking:
-		b.WriteString(m.renderPicker())
+		return m.renderPicker()
 	case m.filtering:
-		b.WriteString(m.renderFilter())
+		return m.renderFilter()
 	default:
-		b.WriteString(m.renderComposer(m.onComposer))
+		return m.renderComposer(m.onComposer)
 	}
-	b.WriteString("\n")
-	b.WriteString(m.footer())
-	return b.String()
 }
 
 // renderPreview shows a peek of the selected session's screen when one is
@@ -51,30 +65,70 @@ func (m model) renderPreview() string {
 	return label + "\n" + hRules(colMuted, m.width).Render(body)
 }
 
+// pill is the xanax logo: a small rounded capsule ("pink pill") whose three
+// rows sit to the left of the three-line title/path/counts block, mirroring the
+// masthead layout. Colored with the accent (pink/magenta by default).
+const pill = "▟█████▙\n" +
+	"███████\n" +
+	"▜█████▛"
+
 func (m model) header() string {
-	counts := map[int]int{}
-	for _, s := range m.sessions {
-		counts[groupRank(s.Status)]++
+	logo := lipgloss.NewStyle().Foreground(colAccent).Render(pill)
+
+	title := titleStyle.Render("xanax")
+	if m.deps.Version != "" {
+		title += mutedStyle.Render(" v" + m.deps.Version)
 	}
-	summary := fmt.Sprintf("%d sessions", len(m.sessions))
-	if counts[0] > 0 {
-		summary += mutedStyle.Render(fmt.Sprintf("  ·  %d awaiting input", counts[0]))
-	}
-	if counts[1] > 0 {
-		summary += mutedStyle.Render(fmt.Sprintf("  ·  %d running", counts[1]))
-	}
-	line := titleStyle.Render("xanax")
-	if m.deps.Scope != "" {
-		line += mutedStyle.Render(" ▸ " + repoName(m.deps.Scope))
-	}
-	line += "   " + summary
+
+	counts := m.counts()
 	if m.filter != "" {
-		line += "   " + branchStyle.Render("filter: "+m.filter)
+		counts += "   " + branchStyle.Render("filter: "+m.filter)
 	}
 	if m.err != nil {
-		line += "   " + errStyle.Render(m.err.Error())
+		counts += "   " + errStyle.Render(m.err.Error())
 	}
-	return line
+
+	lines := []string{title}
+	if m.path != "" { // omit the path row entirely rather than show a blank line
+		lines = append(lines, mutedStyle.Render(m.path))
+	}
+	lines = append(lines, counts)
+	text := strings.Join(lines, "\n")
+	return lipgloss.JoinHorizontal(lipgloss.Top, logo, "   ", text)
+}
+
+// counts renders the session tallies. The three primary buckets — awaiting
+// input, working, completed — are always shown (even at zero) with each number
+// in its status color; cancelled, failed, and other are appended only when
+// non-empty, so the header always reconciles with the list below without
+// cluttering the common case.
+func (m model) counts() string {
+	var c [6]int // indexed by groupRank: waiting, running, completed, cancelled, failed, other
+	for _, s := range m.sessions {
+		r := groupRank(s.Status)
+		if r >= len(c) {
+			r = len(c) - 1 // fold any unexpected rank into "other" rather than drop it
+		}
+		c[r]++
+	}
+	seg := func(n int, col lipgloss.Color, label string) string {
+		return lipgloss.NewStyle().Foreground(col).Render(fmt.Sprintf("%d", n)) +
+			mutedStyle.Render(" "+label)
+	}
+	dot := mutedStyle.Render("  ·  ")
+	out := seg(c[0], colWaiting, "awaiting input") + dot +
+		seg(c[1], colRunning, "working") + dot +
+		seg(c[2], colCompleted, "completed")
+	if c[3] > 0 {
+		out += dot + seg(c[3], colCancelled, "cancelled")
+	}
+	if c[4] > 0 {
+		out += dot + seg(c[4], colFailed, "failed")
+	}
+	if c[5] > 0 {
+		out += dot + seg(c[5], colMuted, "other")
+	}
+	return out
 }
 
 func (m model) renderList() string {

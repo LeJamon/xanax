@@ -6,6 +6,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -30,6 +31,7 @@ type Deps struct {
 	SelfPath   string // path to the xanax binary, for shelling out
 	SocketDir  string
 	ConfigPath string // config.toml, for adding harnesses from the dashboard
+	Version    string // xanax release, shown in the header
 	// Scope, when set, restricts the dashboard to sessions under this absolute
 	// path and launches new sessions there. Empty = all sessions, cwd launches.
 	Scope string
@@ -76,6 +78,7 @@ type model struct {
 	previewText string // last fetched preview of the selected session
 
 	width, height int
+	path          string // scope (or cwd), home-relative, for the header
 	status        string
 	err           error
 
@@ -146,9 +149,30 @@ func Run(deps Deps) error {
 		formInputs:  newFormInputs(),
 		onComposer:  true,
 		harnesses:   harnessNames(deps.Cfg),
+		path:        headerPath(deps.Scope),
 	}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
+}
+
+// headerPath resolves the location shown in the header: the dashboard's scope,
+// or the working directory when unscoped, rendered home-relative (~/…).
+func headerPath(scope string) string {
+	p := scope
+	if p == "" {
+		if wd, err := os.Getwd(); err == nil {
+			p = wd
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if p == home {
+			return "~"
+		}
+		if rel, ok := strings.CutPrefix(p, home+string(filepath.Separator)); ok {
+			return "~/" + rel
+		}
+	}
+	return p
 }
 
 // harnessNames returns the configured harness names, default first, rest
