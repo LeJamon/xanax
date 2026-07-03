@@ -409,6 +409,55 @@ func TestGenericStateInferenceViaPattern(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 }
 
+// TestGenericStateInferenceViaIdle drives a generic harness that emits once and
+// then goes silent, and confirms the idle timeout flips it to waiting with an
+// "idle" detail.
+func TestGenericStateInferenceViaIdle(t *testing.T) {
+	paths := testPaths(t)
+	st, err := store.Open(paths.DBFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	sess := &session.Session{
+		ID: "infer02", Title: "idle", RepoPath: t.TempDir(),
+		Harness: "generic", Status: session.StatusStarting,
+	}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	h := config.Harness{
+		Adapter: config.AdapterGeneric, Command: "sh",
+		Args:        []string{"-c", `printf 'working...'; sleep 300`},
+		IdleTimeout: 1,
+	}
+
+	go supervisor.Run(supervisor.Options{
+		Session: sess, Harness: h, Paths: paths, Store: st, Logger: quietLogger(),
+	})
+	sock := filepath.Join(paths.SocketDir, sess.ID+".sock")
+	waitAlive(t, sock)
+
+	// Poll the store until it reports waiting with an "idle" detail.
+	deadline := time.Now().Add(4 * time.Second)
+	var got *session.Session
+	for time.Now().Before(deadline) {
+		if got, err = st.GetSession(sess.ID); err == nil && got.Status == session.StatusWaiting {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got == nil || got.Status != session.StatusWaiting || got.StatusDetail != "idle" {
+		t.Errorf("idle inference: status=%q detail=%q, want waiting/idle", got.Status, got.StatusDetail)
+	}
+
+	k, _ := net.Dial("unix", sock)
+	wire.WriteJSON(k, wire.TypeKill, struct{}{})
+	k.Close()
+	time.Sleep(200 * time.Millisecond)
+}
+
 func TestSupervisorCleanCompletion(t *testing.T) {
 	paths := testPaths(t)
 	st, err := store.Open(paths.DBFile)

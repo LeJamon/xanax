@@ -264,6 +264,9 @@ func (c *Config) validate() error {
 			return fmt.Errorf("harness %q: unknown adapter %q (want %q, %q, or %q)",
 				name, h.Adapter, AdapterOpencode, AdapterPi, AdapterGeneric)
 		}
+		if h.IdleTimeout < 0 {
+			return fmt.Errorf("harness %q: idle_timeout must be >= 0, got %d", name, h.IdleTimeout)
+		}
 	}
 	return nil
 }

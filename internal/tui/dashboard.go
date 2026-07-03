@@ -352,11 +352,11 @@ func (m model) afterMove(prevID string, extra tea.Cmd) (tea.Model, tea.Cmd) {
 func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyTab:
-		if len(m.harnesses) > 1 {
-			m.picking = true
-			m.pickIdx = m.harnessIdx
-			m.composer.Blur()
-		}
+		// Always open the picker — even with one (or zero) harnesses it is the
+		// only way to reach the '+' add-harness form.
+		m.picking = true
+		m.pickIdx = m.harnessIdx
+		m.composer.Blur()
 		return m, nil
 	case msg.Type == tea.KeyCtrlO, msg.Type == tea.KeyEnter && msg.Alt:
 		// Launch + attach; an empty prompt opens a fresh harness to type in.

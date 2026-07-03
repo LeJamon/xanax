@@ -229,8 +229,10 @@ writes a native adapter. `command`, `args`, `resume_args`, `env` from config.
   marks it *waiting* on an output match (e.g. `\(y/n\)`). Either resets to *running*
   when output resumes. Best-effort; a native adapter is authoritative.
 - **Add from the dashboard:** the harness picker's `+` opens a form (name / command /
-  prompt arg) that appends a generic `[harness.name]` block to `config.toml`, reloads,
-  and selects it — so a new harness is registered without editing files by hand.
+  prompt arg / idle timeout / waiting pattern) that appends a generic `[harness.name]`
+  block to `config.toml`, reloads, and selects it — so a new harness, including its
+  state-inference signals, is registered without editing files by hand. A multi-word
+  command is split into `command` + `args`.
 
 ## 6. Session state model
 

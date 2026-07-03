@@ -217,9 +217,15 @@ func (s *Store) ListSessions() ([]*session.Session, error) {
 // SetStatus updates the session state and bumps updated_at. The full session
 // ID is required (no prefix matching on writes).
 func (s *Store) SetStatus(id string, status session.Status, detail string) error {
+	// Never resurrect a session that has already reached a terminal state: a
+	// late state event (e.g. a generic-adapter idle tick racing shutdown) must
+	// not overwrite a completed/failed/cancelled row. Terminal rows are left
+	// untouched, not treated as an error.
 	res, err := s.db.Exec(
-		`UPDATE sessions SET status = ?, status_detail = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE sessions SET status = ?, status_detail = ?, updated_at = ?
+		 WHERE id = ? AND status NOT IN (?, ?, ?)`,
 		string(status), nullStr(detail), fmtTime(time.Now().UTC()), id,
+		string(session.StatusCompleted), string(session.StatusFailed), string(session.StatusCancelled),
 	)
 	if err != nil {
 		return err
@@ -228,10 +234,20 @@ func (s *Store) SetStatus(id string, status session.Status, detail string) error
 	if err != nil {
 		return err
 	}
-	if n == 0 {
-		return fmt.Errorf("%w: %q", ErrNotFound, id)
+	if n > 0 {
+		return nil
 	}
-	return nil
+	// No row updated: either the id is unknown, or it is already terminal.
+	// Distinguish so a genuinely missing session is still reported.
+	var cur string
+	switch err := s.db.QueryRow(`SELECT status FROM sessions WHERE id = ?`, id).Scan(&cur); {
+	case errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("%w: %q", ErrNotFound, id)
+	case err != nil:
+		return err
+	default:
+		return nil // exists but terminal — intentional no-op
+	}
 }
 
 // SetRuntime records the supervisor's pid and socket path and moves the

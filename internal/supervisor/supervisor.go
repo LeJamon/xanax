@@ -172,8 +172,12 @@ func (s *Supervisor) run() (int, error) {
 	go func() { defer wg.Done(); s.acceptClients() }()
 	go func() { defer wg.Done(); s.watchState() }()
 	go s.pollSessionRef() // stops when exited closes
-	if s.infer != nil {
-		go s.idleLoop()
+	// The idle checker is part of wg so finish() (after wg.Wait) is guaranteed
+	// to run after any in-flight idle transition — a late idle tick can never
+	// overwrite the terminal status.
+	if s.infer != nil && s.infer.idle > 0 {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.idleLoop() }()
 	}
 
 	exitCode := s.wait()
@@ -232,9 +236,7 @@ func (s *Supervisor) pumpOutput() {
 				s.rawLog.Write(emit)
 				s.hub.broadcastOutput(emit)
 				if s.infer != nil {
-					if st, detail, ok := s.infer.observe(emit); ok {
-						s.applyStatus(st, detail)
-					}
+					s.inferObserve(emit)
 				}
 			}
 		}
@@ -391,27 +393,37 @@ func (s *Supervisor) watchState() {
 	}
 }
 
-// applyStatus records a non-terminal status transition: persists it, broadcasts
-// it to attached clients, and notifies on an actual status change. Idempotent
-// on an unchanged (status, detail). Called by the native state watcher and the
-// generic inferer, which never run concurrently for one session.
+// applyStatus records a non-terminal status transition from the native state
+// watcher and notifies on an actual change. See applyStatusLocked.
 func (s *Supervisor) applyStatus(status session.Status, detail string) {
 	s.statusMu.Lock()
-	prev, prevDetail := s.curStatus, s.curDetail
-	if status == prev && detail == prevDetail {
-		s.statusMu.Unlock()
-		return
+	prev, changed := s.applyStatusLocked(status, detail)
+	s.statusMu.Unlock()
+	if changed {
+		s.raiseNotification(prev, status, detail)
+	}
+}
+
+// applyStatusLocked persists a non-terminal status transition and broadcasts it
+// to attached clients, holding statusMu across both so the store and the live
+// wire state stay totally ordered. This is what lets the generic inferer's
+// output and idle signals interleave safely: whichever acquires the lock last
+// wins in the store exactly as it does in curStatus, so a stale idle tick can
+// never leave the session stuck "waiting" while output flows. It reports the
+// previous status and whether the status actually changed so the caller can
+// notify AFTER releasing the lock (the desktop notification may block). The
+// caller must hold statusMu; the notification is intentionally left to it.
+func (s *Supervisor) applyStatusLocked(status session.Status, detail string) (prev session.Status, changed bool) {
+	prev = s.curStatus
+	if status == prev && detail == s.curDetail {
+		return prev, false
 	}
 	s.curStatus, s.curDetail = status, detail
-	s.statusMu.Unlock()
-
 	if err := s.opts.Store.SetStatus(s.opts.Session.ID, status, detail); err != nil {
 		s.log.Warn("set status failed", "err", err)
 	}
 	s.hub.broadcastState(wire.State{Status: string(status), Detail: detail})
-	if status != prev {
-		s.raiseNotification(prev, status, detail)
-	}
+	return prev, status != prev
 }
 
 func (s *Supervisor) pollSessionRef() {
