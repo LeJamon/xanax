@@ -112,7 +112,7 @@ func Run(deps Deps) error {
 	ta.Placeholder = "Paste a prompt and press Enter to launch a new session…"
 	ta.ShowLineNumbers = false
 	ta.Prompt = ""
-	ta.SetHeight(3)
+	ta.SetHeight(1) // starts one line, auto-grows with content (syncComposerHeight)
 	ta.CharLimit = 0
 	// White text, and no current-line highlight. The cursor line is styled by
 	// CursorLine (not Text), so it must carry the white foreground too —
@@ -221,6 +221,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.composer.SetWidth(max(20, msg.Width-2))
+		m.syncComposerHeight() // wrap width changed, so the row count may have too
 		m.renameInput.Width = max(20, msg.Width-4)
 		return m, nil
 
@@ -375,17 +376,42 @@ func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Launch + attach; an empty prompt opens a fresh harness to type in.
 		prompt := strings.TrimSpace(m.composer.Value())
 		m.composer.Reset()
+		m.syncComposerHeight() // shrink back to one line
 		return m, m.execNewAttach(prompt)
 	case msg.Type == tea.KeyEnter:
 		if prompt := strings.TrimSpace(m.composer.Value()); prompt != "" {
 			m.composer.Reset()
+			m.syncComposerHeight() // shrink back to one line
 			return m, m.execNewBackground(prompt)
 		}
 		return m, nil
 	}
 	var cmd tea.Cmd
 	m.composer, cmd = m.composer.Update(msg)
+	m.syncComposerHeight() // grow/shrink to fit what the user just typed or pasted
 	return m, cmd
+}
+
+// syncComposerHeight sizes the prompt box to its content: it starts at a single
+// line and grows as the user types or pastes, counting visual rows (long lines
+// wrap at the composer's text width) and clamping between one line and a modest
+// ceiling so the box never crowds out the session list.
+func (m *model) syncComposerHeight() {
+	const ceiling = 10
+	width := m.composer.Width()
+	rows := 0
+	for line := range strings.SplitSeq(m.composer.Value(), "\n") {
+		if width <= 0 {
+			rows++ // no wrap width yet (pre-resize); count logical lines
+			continue
+		}
+		rows += max(1, (lipgloss.Width(line)+width-1)/width)
+	}
+	maxRows := ceiling
+	if m.height > 0 {
+		maxRows = min(ceiling, max(1, m.height/3))
+	}
+	m.composer.SetHeight(min(max(rows, 1), maxRows))
 }
 
 // updatePickKey runs while the harness picker is open: ↑/↓ move, Enter picks,
