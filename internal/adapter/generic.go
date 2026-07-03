@@ -11,20 +11,37 @@ import (
 
 // genericAdapter runs any CLI from configuration. It has no state channel, so
 // its sessions report only running and terminal states (SPEC.md §5). The
-// initial prompt, if any, is typed into the PTY.
+// initial prompt is delivered on the command line when the harness declares how
+// (prompt_arg / prompt_positional), else typed into the PTY as a fallback.
 type genericAdapter struct {
 	sess *session.Session
 	h    config.Harness
+	// resuming records whether the most recent Launch was a resume, so the PTY
+	// fallback in AfterStart does not re-type the initial prompt into a session
+	// that is only being reattached. Launch always runs before AfterStart.
+	resuming bool
 }
 
 func newGeneric(sess *session.Session, h config.Harness, _ Deps) (Adapter, error) {
 	return &genericAdapter{sess: sess, h: h}, nil
 }
 
+// promptOnCmdline reports whether the prompt is delivered as an argument (so it
+// must not also be typed into the PTY).
+func (a *genericAdapter) promptOnCmdline() bool {
+	return a.h.PromptArg != "" || a.h.PromptPositional
+}
+
 func (a *genericAdapter) Launch(resume bool) (LaunchSpec, error) {
-	args := a.h.Args
-	if resume && len(a.h.ResumeArgs) > 0 {
-		args = a.h.ResumeArgs
+	a.resuming = resume
+	args := append([]string(nil), a.h.Args...)
+	switch {
+	case resume && len(a.h.ResumeArgs) > 0:
+		args = append([]string(nil), a.h.ResumeArgs...)
+	case !resume && a.sess.InitialPrompt != "" && a.h.PromptArg != "":
+		args = append(args, a.h.PromptArg, a.sess.InitialPrompt)
+	case !resume && a.sess.InitialPrompt != "" && a.h.PromptPositional:
+		args = append(args, a.sess.InitialPrompt)
 	}
 	return LaunchSpec{
 		Path: a.h.Command,
@@ -35,11 +52,12 @@ func (a *genericAdapter) Launch(resume bool) (LaunchSpec, error) {
 }
 
 func (a *genericAdapter) AfterStart(pty io.Writer) error {
-	if a.sess.InitialPrompt == "" {
-		return nil
+	if a.sess.InitialPrompt == "" || a.promptOnCmdline() || a.resuming {
+		return nil // no prompt, already delivered on the command line, or resuming
 	}
-	// Best-effort: type the prompt followed by Enter. Line-based CLIs consume
-	// it; full-screen TUIs that want richer delivery use a native adapter.
+	// Fallback: type the prompt followed by Enter. Line-based CLIs consume it;
+	// full-screen TUIs are better served by prompt_arg/prompt_positional or a
+	// native adapter (typing races the TUI's startup).
 	_, err := io.WriteString(pty, a.sess.InitialPrompt+"\r")
 	return err
 }

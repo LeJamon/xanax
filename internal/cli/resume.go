@@ -36,9 +36,9 @@ func newResumeCmd() *cobra.Command {
 				return runAttach(e, sess.ID)
 			}
 
-			// Dead: relaunch via the harness's native resume if we have a ref.
-			if sess.HarnessSessionRef == "" {
-				return fmt.Errorf("session %s cannot be resumed (no harness session ref was captured)",
+			// Dead: relaunch via the harness's native resume.
+			if !e.canResume(sess) {
+				return fmt.Errorf("session %s cannot be resumed (no harness session ref, and its harness has no resume_args)",
 					shortID(sess.ID))
 			}
 			if _, err := e.spawnSupervisor(sess.ID, true); err != nil {

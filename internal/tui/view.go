@@ -26,6 +26,8 @@ func (m model) View() string {
 	switch {
 	case m.renaming:
 		b.WriteString(m.renderRename())
+	case m.addingHarness:
+		b.WriteString(m.renderHarnessForm())
 	case m.picking:
 		b.WriteString(m.renderPicker())
 	case m.filtering:
@@ -170,11 +172,30 @@ func (m model) renderComposer(selected bool) string {
 	return label + "\n" + hRules(color, m.width).Render(m.composer.View())
 }
 
+// renderHarnessForm draws the add-harness form in the composer's slot.
+func (m model) renderHarnessForm() string {
+	var b strings.Builder
+	b.WriteString(groupStyle.Foreground(colAccent).Render("Add harness (generic)"))
+	b.WriteString(mutedStyle.Render("  ·  tab next field, enter save, esc cancel"))
+	b.WriteByte('\n')
+	for i, in := range m.formInputs {
+		marker := "  "
+		if i == m.formField {
+			marker = cursorStyle.Render("▸ ")
+		}
+		fmt.Fprintf(&b, "%s%s %s\n", marker, fieldStyle.Render(fmt.Sprintf("%-22s", formLabels[i])), in.View())
+	}
+	if m.formErr != "" {
+		b.WriteString(errStyle.Render("  " + m.formErr))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // renderPicker draws the harness selector in the composer's slot: one row per
-// configured harness, ↑/↓ to move, enter to pick.
+// configured harness, ↑/↓ to move, enter to pick, + to add a new one.
 func (m model) renderPicker() string {
 	label := groupStyle.Foreground(colAccent).Render("Select harness") +
-		mutedStyle.Render("  ·  ↑/↓ move, enter select, esc cancel")
+		mutedStyle.Render("  ·  ↑/↓ move, enter select, + add, esc cancel")
 	var rows []string
 	for i, name := range m.harnesses {
 		adapter := m.deps.Cfg.Harnesses[name].Adapter
@@ -208,17 +229,16 @@ func (m model) renderRename() string {
 func (m model) footer() string {
 	var hint string
 	switch {
+	case m.addingHarness:
+		hint = "tab next · enter save · esc cancel"
 	case m.renaming:
 		hint = "enter save · esc cancel"
 	case m.picking:
-		hint = "↑/↓ move · enter select · esc cancel"
+		hint = "↑/↓ move · enter select · + add · esc cancel"
 	case m.filtering:
 		hint = "type to filter · enter apply · esc clear"
 	case m.onComposer:
-		hint = "enter launch · ^o launch+attach · ↑ sessions · ^c quit"
-		if len(m.harnesses) > 1 {
-			hint = "enter launch · ^o launch+attach · tab harness · ↑ sessions · ^c quit"
-		}
+		hint = "enter launch · ^o launch+attach · tab harness (+ add) · ↑ sessions · ^c quit"
 	default:
 		hint = "↑/↓ select · →/enter open · e rename · r resume · k remove · / filter · ^c quit"
 	}

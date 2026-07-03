@@ -27,7 +27,7 @@ func (e *env) reconcile(st *store.Store) ([]string, error) {
 			continue // still running, nothing to do
 		}
 		// Supervisor is gone.
-		if e.cfg.AutoResume && s.HarnessSessionRef != "" {
+		if e.cfg.AutoResume && e.canResume(s) {
 			if _, err := e.spawnSupervisor(s.ID, true); err != nil {
 				slog.Warn("auto-resume failed", "session", s.ID, "err", err)
 				st.SetStatus(s.ID, session.StatusFailed, "auto-resume failed")

@@ -110,10 +110,11 @@ func runDashboard(scope string) error {
 		return err
 	}
 	return tui.Run(tui.Deps{
-		Store:     st,
-		Cfg:       e.cfg,
-		SelfPath:  self,
-		SocketDir: e.paths.SocketDir,
-		Scope:     scope,
+		Store:      st,
+		Cfg:        e.cfg,
+		SelfPath:   self,
+		SocketDir:  e.paths.SocketDir,
+		ConfigPath: e.paths.ConfigFile,
+		Scope:      scope,
 	})
 }

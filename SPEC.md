@@ -213,8 +213,26 @@ type StateEvent struct {
 - Resume: `pi -e <hook.mjs> --session <ref>`.
 
 ### generic adapter (config-only)
-- `command`, `args`, `resume_args`, `env` from TOML. Prompt delivered by PTY write.
-- No `WatchState` → states limited to running / completed / failed / cancelled.
+Runs any PTY CLI from TOML — the day-one path for a new harness before anyone
+writes a native adapter. `command`, `args`, `resume_args`, `env` from config.
+- **Prompt delivery:** `prompt_arg = "--flag"` passes the initial prompt as a flag
+  value, `prompt_positional = true` appends it as the last argument, else it is typed
+  into the PTY (a fallback that races full-screen TUIs). This is what makes the
+  composer/`xanax new` flow reliable for a generic harness.
+- **Resume:** with `resume_args` set to the harness's "continue last session in this
+  repo" flag (e.g. `-c`), a generic session is resumable — both `xanax resume` and
+  auto-resume-after-reboot treat a configured `resume_args` as "resumable" even
+  though generic captures no session ref. Precise when there is one session per repo.
+- **State inference (approximate, opt-in):** with no native state channel the
+  supervisor can still infer needs-input from the output stream — `idle_timeout = N`
+  marks the session *waiting* after N seconds of silence; `waiting_pattern = "regexp"`
+  marks it *waiting* on an output match (e.g. `\(y/n\)`). Either resets to *running*
+  when output resumes. Best-effort; a native adapter is authoritative.
+- **Add from the dashboard:** the harness picker's `+` opens a form (name / command /
+  prompt arg / idle timeout / waiting pattern) that appends a generic `[harness.name]`
+  block to `config.toml`, reloads, and selects it — so a new harness, including its
+  state-inference signals, is registered without editing files by hand. A multi-word
+  command is split into `command` + `args`.
 
 ## 6. Session state model
 
@@ -330,8 +348,10 @@ command = "pi"
 [harness.goose]
 adapter     = "generic"
 command     = "goose"
-args        = ["session"]
-resume_args = ["session", "--resume"]
+args        = ["session"]                # start goose's interactive session
+resume_args = ["session", "--resume"]    # resume the most recent session
+# A CLI that accepts the prompt as a flag can add prompt_arg = "--flag"
+# (or prompt_positional = true) to deliver it on the command line instead.
 ```
 
 Defaults for opencode and pi are built in; the file is optional.

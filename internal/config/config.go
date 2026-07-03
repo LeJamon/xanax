@@ -28,6 +28,22 @@ type Harness struct {
 	Args       []string          `toml:"args,omitempty"`
 	ResumeArgs []string          `toml:"resume_args,omitempty"`
 	Env        map[string]string `toml:"env,omitempty"`
+
+	// Prompt delivery for the generic adapter. PromptArg passes the initial
+	// prompt as a flag value (command … <prompt_arg> "<prompt>"). PromptPositional
+	// appends it as the last argument (command … "<prompt>"). With neither set
+	// the generic adapter falls back to typing the prompt into the PTY. Ignored
+	// by the native pi/opencode adapters.
+	PromptArg        string `toml:"prompt_arg,omitempty"`
+	PromptPositional bool   `toml:"prompt_positional,omitempty"`
+
+	// Approximate state detection for the generic adapter (no native state
+	// channel). IdleTimeout marks the session "waiting" after that many seconds
+	// with no output; WaitingPattern is a regexp matched against output that
+	// marks it "waiting" immediately (e.g. a "(y/n)" prompt). Either resets to
+	// "running" when output resumes. Ignored by native adapters.
+	IdleTimeout    int    `toml:"idle_timeout,omitempty"`
+	WaitingPattern string `toml:"waiting_pattern,omitempty"`
 }
 
 // Config is the fully resolved configuration.
@@ -207,6 +223,18 @@ func Load(path string) (*Config, error) {
 		if fh.ResumeArgs != nil {
 			merged.ResumeArgs = fh.ResumeArgs
 		}
+		if fh.PromptArg != "" {
+			merged.PromptArg = fh.PromptArg
+		}
+		if fh.PromptPositional {
+			merged.PromptPositional = true
+		}
+		if fh.IdleTimeout != 0 {
+			merged.IdleTimeout = fh.IdleTimeout
+		}
+		if fh.WaitingPattern != "" {
+			merged.WaitingPattern = fh.WaitingPattern
+		}
 		if len(fh.Env) > 0 {
 			if merged.Env == nil {
 				merged.Env = make(map[string]string, len(fh.Env))
@@ -238,6 +266,9 @@ func (c *Config) validate() error {
 		default:
 			return fmt.Errorf("harness %q: unknown adapter %q (want %q, %q, or %q)",
 				name, h.Adapter, AdapterOpencode, AdapterPi, AdapterGeneric)
+		}
+		if h.IdleTimeout < 0 {
+			return fmt.Errorf("harness %q: idle_timeout must be >= 0, got %d", name, h.IdleTimeout)
 		}
 	}
 	if err := c.Theme.validate(); err != nil {

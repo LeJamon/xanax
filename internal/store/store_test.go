@@ -132,6 +132,30 @@ func TestSetStatusAndExitCode(t *testing.T) {
 	}
 }
 
+// TestSetStatusIgnoresTerminalSession guards the terminal guard: a late state
+// write (e.g. a generic-adapter idle tick racing shutdown) must neither
+// resurrect a finished session nor be reported as an error.
+func TestSetStatusIgnoresTerminalSession(t *testing.T) {
+	st := openTemp(t)
+	in := sample("33333333-0000-0000-0000-000000000001")
+	if err := st.CreateSession(in); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Finish(in.ID, session.StatusCompleted, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetStatus(in.ID, session.StatusWaiting, "idle"); err != nil {
+		t.Fatalf("SetStatus on a terminal session should be a silent no-op, got %v", err)
+	}
+	got, err := st.GetSession(in.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != session.StatusCompleted {
+		t.Errorf("terminal status was overwritten: got %q, want completed", got.Status)
+	}
+}
+
 func TestSetStatusUnknownSession(t *testing.T) {
 	st := openTemp(t)
 	if err := st.SetStatus("ghost", session.StatusRunning, ""); !errors.Is(err, store.ErrNotFound) {

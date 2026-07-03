@@ -68,6 +68,16 @@ type Supervisor struct {
 	curRows  uint16
 	curCols  uint16
 	killedBy atomic.Bool
+
+	// Non-terminal status tracking, shared by the native state watcher and the
+	// generic inference path (only one is active per session).
+	statusMu  sync.Mutex
+	curStatus session.Status
+	curDetail string
+
+	// Generic state inference (active only when the adapter has no state
+	// channel and the harness configured it).
+	infer *inferer
 	// altScreen is true when the harness has switched to the alternate screen
 	// buffer (i.e. it is a full-screen TUI). Attaching clients then get a clean
 	// repaint instead of a replay of stale frames (SPEC.md §4).
@@ -147,6 +157,11 @@ func (s *Supervisor) run() (int, error) {
 	})
 
 	s.markRunning()
+	// Generic state inference: only when the harness exposes no native state
+	// channel and configured a heuristic.
+	if a.States() == nil {
+		s.infer = newInferer(s.opts.Harness, s.log)
+	}
 	if err := a.AfterStart(s.ptmx); err != nil {
 		s.log.Warn("adapter AfterStart failed", "err", err)
 	}
@@ -157,6 +172,13 @@ func (s *Supervisor) run() (int, error) {
 	go func() { defer wg.Done(); s.acceptClients() }()
 	go func() { defer wg.Done(); s.watchState() }()
 	go s.pollSessionRef() // stops when exited closes
+	// The idle checker is part of wg so finish() (after wg.Wait) is guaranteed
+	// to run after any in-flight idle transition — a late idle tick can never
+	// overwrite the terminal status.
+	if s.infer != nil && s.infer.idle > 0 {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.idleLoop() }()
+	}
 
 	exitCode := s.wait()
 	close(s.exited)
@@ -213,6 +235,9 @@ func (s *Supervisor) pumpOutput() {
 				s.altScreen.Store(updateAltScreen(s.altScreen.Load(), emit))
 				s.rawLog.Write(emit)
 				s.hub.broadcastOutput(emit)
+				if s.infer != nil {
+					s.inferObserve(emit)
+				}
 			}
 		}
 		if err != nil {
@@ -355,7 +380,6 @@ func (s *Supervisor) watchState() {
 		return
 	}
 	s.stateInfo.had = true
-	prev := session.StatusRunning
 	for ev := range ch {
 		s.stateInfo.saw = true
 		s.stateInfo.last = ev.Kind
@@ -363,16 +387,43 @@ func (s *Supervisor) watchState() {
 		s.opts.Store.RecordEvent(s.opts.Session.ID, "state", map[string]any{
 			"kind": ev.Kind.String(), "detail": ev.Message,
 		})
-		if !change {
-			continue
+		if change {
+			s.applyStatus(status, detail)
 		}
-		if err := s.opts.Store.SetStatus(s.opts.Session.ID, status, detail); err != nil {
-			s.log.Warn("set status failed", "err", err)
-		}
-		s.hub.broadcastState(wire.State{Status: string(status), Detail: detail})
-		s.raiseNotification(prev, status, detail)
-		prev = status
 	}
+}
+
+// applyStatus records a non-terminal status transition from the native state
+// watcher and notifies on an actual change. See applyStatusLocked.
+func (s *Supervisor) applyStatus(status session.Status, detail string) {
+	s.statusMu.Lock()
+	prev, changed := s.applyStatusLocked(status, detail)
+	s.statusMu.Unlock()
+	if changed {
+		s.raiseNotification(prev, status, detail)
+	}
+}
+
+// applyStatusLocked persists a non-terminal status transition and broadcasts it
+// to attached clients, holding statusMu across both so the store and the live
+// wire state stay totally ordered. This is what lets the generic inferer's
+// output and idle signals interleave safely: whichever acquires the lock last
+// wins in the store exactly as it does in curStatus, so a stale idle tick can
+// never leave the session stuck "waiting" while output flows. It reports the
+// previous status and whether the status actually changed so the caller can
+// notify AFTER releasing the lock (the desktop notification may block). The
+// caller must hold statusMu; the notification is intentionally left to it.
+func (s *Supervisor) applyStatusLocked(status session.Status, detail string) (prev session.Status, changed bool) {
+	prev = s.curStatus
+	if status == prev && detail == s.curDetail {
+		return prev, false
+	}
+	s.curStatus, s.curDetail = status, detail
+	if err := s.opts.Store.SetStatus(s.opts.Session.ID, status, detail); err != nil {
+		s.log.Warn("set status failed", "err", err)
+	}
+	s.hub.broadcastState(wire.State{Status: string(status), Detail: detail})
+	return prev, status != prev
 }
 
 func (s *Supervisor) pollSessionRef() {
@@ -443,6 +494,7 @@ func (s *Supervisor) wait() int {
 
 func (s *Supervisor) markRunning() {
 	id := s.opts.Session.ID
+	s.curStatus = session.StatusRunning
 	if err := s.opts.Store.SetRuntime(id, os.Getpid(), s.socketPath(), session.StatusRunning); err != nil {
 		s.log.Warn("mark running failed", "err", err)
 	}

@@ -26,6 +26,7 @@ func newTestModel(sessions []*session.Session) model {
 		composer:    textarea.New(),
 		renameInput: textinput.New(),
 		filterInput: textinput.New(),
+		formInputs:  newFormInputs(),
 		onComposer:  true,
 		harnesses:   harnessNames(cfg),
 		width:       120,
@@ -346,15 +347,12 @@ func TestNewSessionArgsAttach(t *testing.T) {
 	}
 }
 
-func TestTabWithSingleHarnessDoesNotOpenPicker(t *testing.T) {
+func TestTabWithSingleHarnessOpensPicker(t *testing.T) {
 	m := newTestModel(nil)
-	m.harnesses = []string{"opencode"} // only one configured — nothing to pick
-	m = send(m, "tab")
-	if m.picking {
-		t.Fatal("tab opened the picker with only one harness")
-	}
-	if !m.onComposer {
-		t.Error("tab left the composer instead of falling through to it")
+	m.harnesses = []string{"opencode"} // even with one harness, Tab must reach
+	m = send(m, "tab")                 // the picker so '+' (add harness) is usable
+	if !m.picking {
+		t.Fatal("tab did not open the picker with a single harness")
 	}
 }
 
