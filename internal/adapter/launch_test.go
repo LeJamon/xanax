@@ -136,6 +136,52 @@ func TestGenericAfterStartResume(t *testing.T) {
 	}
 }
 
+// TestGenericCodexLaunch pins the codex generic-harness contract documented in
+// README/SPEC: fresh launch is `codex "<prompt>"` (positional, never typed into
+// the full-screen TUI), and resume is `codex resume --last` without the prompt.
+func TestGenericCodexLaunch(t *testing.T) {
+	sess := &session.Session{ID: "cx", RepoPath: "/repo", InitialPrompt: "fix the flaky test"}
+	h := config.Harness{
+		Adapter:          config.AdapterGeneric,
+		Command:          "codex",
+		PromptPositional: true,
+		ResumeArgs:       []string{"resume", "--last"},
+	}
+	a, err := New(sess, h, testDeps(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	fresh, err := a.Launch(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Path != "codex" || len(fresh.Args) != 1 || fresh.Args[0] != "fix the flaky test" {
+		t.Errorf("fresh launch = %s %v, want codex [\"fix the flaky test\"]", fresh.Path, fresh.Args)
+	}
+	// prompt_positional delivers on the command line, so nothing is typed into
+	// codex's TUI (which would race its startup).
+	var typed bytes.Buffer
+	if err := a.AfterStart(&typed); err != nil {
+		t.Fatal(err)
+	}
+	if typed.Len() != 0 {
+		t.Errorf("AfterStart typed into the codex TUI: %q", typed.String())
+	}
+
+	resume, err := a.Launch(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resume.Args) != 2 || resume.Args[0] != "resume" || resume.Args[1] != "--last" {
+		t.Errorf("resume args = %v, want [resume --last]", resume.Args)
+	}
+	if argIndex(resume.Args, "fix the flaky test") >= 0 {
+		t.Errorf("resume must not carry the prompt: %v", resume.Args)
+	}
+}
+
 func TestOpencodeLaunchHasNoServerPassword(t *testing.T) {
 	sess := &session.Session{ID: "o1", RepoPath: "/repo", InitialPrompt: "fix tests"}
 	h := config.Harness{Adapter: config.AdapterOpencode, Command: "opencode"}

@@ -100,6 +100,15 @@ args        = ["session"]                # start goose's interactive session
 resume_args = ["session", "--resume"]    # resume the most recent session
 # A CLI that takes the prompt as a flag can set prompt_arg = "--flag"
 # (or prompt_positional = true) to skip typing it into the PTY.
+
+# codex: a full-screen TUI. It takes the prompt positionally and resumes
+# natively, so xanax never types into its input (which would race startup).
+[harness.codex]
+adapter           = "generic"
+command           = "codex"
+prompt_positional = true                  # codex "<prompt>" starts a session with it
+resume_args       = ["resume", "--last"]  # reattach to the most recent session
+idle_timeout      = 120                   # no native state; mark "waiting" when idle
 ```
 
 ## Layout

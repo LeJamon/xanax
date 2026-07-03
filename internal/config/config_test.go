@@ -87,6 +87,40 @@ resume_args = ["session", "--resume"]
 	}
 }
 
+// TestLoadCodexGenericExample loads the documented codex block (README/SPEC)
+// and asserts it decodes as intended. It also covers prompt_positional and
+// idle_timeout, which no other config test exercises.
+func TestLoadCodexGenericExample(t *testing.T) {
+	path := writeConfig(t, `
+[harness.codex]
+adapter           = "generic"
+command           = "codex"
+prompt_positional = true
+resume_args       = ["resume", "--last"]
+idle_timeout      = 120
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	codex := cfg.Harnesses["codex"]
+	if codex.Adapter != config.AdapterGeneric {
+		t.Errorf("codex adapter = %q, want %q", codex.Adapter, config.AdapterGeneric)
+	}
+	if codex.Command != "codex" {
+		t.Errorf("codex command = %q, want codex", codex.Command)
+	}
+	if !codex.PromptPositional {
+		t.Error("codex prompt_positional = false, want true")
+	}
+	if len(codex.ResumeArgs) != 2 || codex.ResumeArgs[0] != "resume" || codex.ResumeArgs[1] != "--last" {
+		t.Errorf("codex resume_args = %v, want [resume --last]", codex.ResumeArgs)
+	}
+	if codex.IdleTimeout != 120 {
+		t.Errorf("codex idle_timeout = %d, want 120", codex.IdleTimeout)
+	}
+}
+
 func TestThemeMergeOverridesOnlyProvidedFields(t *testing.T) {
 	path := writeConfig(t, `
 [theme]

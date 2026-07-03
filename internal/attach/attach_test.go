@@ -119,6 +119,25 @@ func TestFindDetach(t *testing.T) {
 		{"bare esc is not detach", []byte{0x1b}, -1, 0},
 		{"earliest wins: arrow before exit", []byte{0x1b, '[', 'D', exit}, 0, 3},
 		{"earliest wins: exit before arrow", []byte{exit, 0x1b, '[', 'D'}, 0, 1},
+		// Kitty keyboard protocol: harnesses like codex push CSI > u, so the
+		// Left arrow arrives as a parameterized CSI. Unmodified forms detach.
+		{"kitty report-all-keys", []byte{0x1b, '[', '1', 'D'}, 0, 4},
+		{"kitty unmodified press", []byte{0x1b, '[', '1', ';', '1', 'D'}, 0, 6},
+		{"kitty unmodified release", []byte{0x1b, '[', '1', ';', '1', ':', '3', 'D'}, 0, 8},
+		{"kitty unmodified repeat", []byte{0x1b, '[', '1', ';', '1', ':', '2', 'D'}, 0, 8},
+		{"kitty arrow after text", append([]byte("x"), 0x1b, '[', '1', ';', '1', ':', '3', 'D'), 1, 8},
+		// Coalesced press+release from one Left tap (report-event-types on):
+		// the press matches first. This is the case the old exact-match missed.
+		{"kitty press then release coalesced", []byte{0x1b, '[', '1', ';', '1', 'D', 0x1b, '[', '1', ';', '1', ':', '3', 'D'}, 0, 6},
+		// Modified Left passes through to the harness (word nav / selection).
+		{"kitty ctrl+left is not detach", []byte{0x1b, '[', '1', ';', '5', 'D'}, -1, 0},
+		{"kitty alt+left is not detach", []byte{0x1b, '[', '1', ';', '3', 'D'}, -1, 0},
+		{"kitty shift+left is not detach", []byte{0x1b, '[', '1', ';', '2', 'D'}, -1, 0},
+		{"kitty ctrl+right is not detach", []byte{0x1b, '[', '1', ';', '5', 'C'}, -1, 0},
+		// A modified arrow still lets a following exit key detach.
+		{"modified arrow then exit", []byte{0x1b, '[', '1', ';', '5', 'D', exit}, 6, 1},
+		// Partial sequence at a read boundary: no match (dropped, as before).
+		{"partial kitty csi", []byte{0x1b, '[', '1', ';'}, -1, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

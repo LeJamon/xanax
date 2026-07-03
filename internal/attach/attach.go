@@ -224,48 +224,91 @@ func watchWinch(conn net.Conn, out *os.File) func() {
 	}
 }
 
-// leftArrowSeqs are the byte sequences a terminal sends for the Left arrow, in
-// normal (CSI) and application (SS3) cursor-key modes.
-var leftArrowSeqs = [][]byte{{0x1b, '[', 'D'}, {0x1b, 'O', 'D'}}
-
 // findDetach returns the offset and length of the earliest detach trigger in
-// data — either the configured exit key byte or a Left-arrow sequence — or
-// (-1, 0) if none is present. Left arrow returns the user to the dashboard.
+// data — the configured exit key byte or an unmodified Left-arrow key — or
+// (-1, 0) if none is present. Left returns the user to the dashboard.
+//
+// The scan is left-to-right so the caller can forward the bytes preceding the
+// trigger before detaching.
 func findDetach(data []byte, exitKey byte) (idx, length int) {
-	best, bestLen := -1, 0
-	if i := indexByte(data, exitKey); i >= 0 {
-		best, bestLen = i, 1
-	}
-	for _, seq := range leftArrowSeqs {
-		if i := bytesIndex(data, seq); i >= 0 && (best < 0 || i < best) {
-			best, bestLen = i, len(seq)
+	for i := range data {
+		if data[i] == exitKey {
+			return i, 1
+		}
+		if n := leftArrowDetachLen(data[i:]); n > 0 {
+			return i, n
 		}
 	}
-	return best, bestLen
+	return -1, 0
+}
+
+// leftArrowDetachLen reports the length of an *unmodified* Left-arrow key
+// sequence at the start of data, or 0 if data does not begin with one.
+//
+// The Left arrow reaches the client in several encodings depending on the
+// terminal mode the harness negotiated through the passthrough:
+//
+//	ESC O D                  SS3 / application-cursor-keys mode (DECCKM)
+//	ESC [ D                  legacy CSI
+//	ESC [ 1 D                Kitty "report all keys" form (key code, no modifier)
+//	ESC [ 1 ; <m>[:<e>] D    Kitty keyboard protocol — harnesses like codex push
+//	                         it (CSI > u); <m> is 1+modifier bitmask, <e> the
+//	                         press/repeat/release event. Unmodified means <m>==1.
+//
+// Only the unmodified Left detaches; Left with a modifier (Ctrl/Alt/Shift) is
+// passed through to the harness for word navigation and selection. A sequence
+// still being assembled across a read boundary (no final byte yet) returns 0,
+// matching the pre-Kitty behavior of dropping split sequences.
+func leftArrowDetachLen(data []byte) int {
+	if len(data) < 3 || data[0] != 0x1b {
+		return 0
+	}
+	switch data[1] {
+	case 'O': // SS3: ESC O D
+		if data[2] == 'D' {
+			return 3
+		}
+		return 0
+	case '[': // CSI: ESC [ <params> D, params in [0-9;:]
+		i := 2
+		for i < len(data) && isCSIParam(data[i]) {
+			i++
+		}
+		if i >= len(data) || data[i] != 'D' {
+			return 0 // wrong final byte, or partial sequence
+		}
+		if !leftArrowUnmodified(data[2:i]) {
+			return 0
+		}
+		return i + 1
+	default:
+		return 0
+	}
+}
+
+func isCSIParam(b byte) bool {
+	return (b >= '0' && b <= '9') || b == ';' || b == ':'
+}
+
+// leftArrowUnmodified reports whether a CSI cursor-key parameter list (the bytes
+// between "ESC [" and the final "D") denotes a key with no modifiers. The
+// modifier lives in the second ';'-separated field, before any ':' event
+// subfield, and defaults to 1 (no modifiers) when absent.
+func leftArrowUnmodified(params []byte) bool {
+	semi := indexByte(params, ';')
+	if semi < 0 {
+		return true // ESC [ D or ESC [ <keycode> D — no modifier field
+	}
+	mod := params[semi+1:]
+	if c := indexByte(mod, ':'); c >= 0 {
+		mod = mod[:c] // drop the event-type subfield
+	}
+	return len(mod) == 0 || (len(mod) == 1 && mod[0] == '1')
 }
 
 func indexByte(p []byte, b byte) int {
 	for i, c := range p {
 		if c == b {
-			return i
-		}
-	}
-	return -1
-}
-
-func bytesIndex(hay, needle []byte) int {
-	if len(needle) == 0 || len(needle) > len(hay) {
-		return -1
-	}
-	for i := 0; i+len(needle) <= len(hay); i++ {
-		match := true
-		for j := range needle {
-			if hay[i+j] != needle[j] {
-				match = false
-				break
-			}
-		}
-		if match {
 			return i
 		}
 	}
