@@ -223,8 +223,14 @@ writes a native adapter. `command`, `args`, `resume_args`, `env` from config.
   repo" flag (e.g. `-c`), a generic session is resumable — both `xanax resume` and
   auto-resume-after-reboot treat a configured `resume_args` as "resumable" even
   though generic captures no session ref. Precise when there is one session per repo.
-- **No `WatchState`** → states limited to running / completed / failed / cancelled;
-  no needs-input detection (that requires a native adapter or, later, a heuristic).
+- **State inference (approximate, opt-in):** with no native state channel the
+  supervisor can still infer needs-input from the output stream — `idle_timeout = N`
+  marks the session *waiting* after N seconds of silence; `waiting_pattern = "regexp"`
+  marks it *waiting* on an output match (e.g. `\(y/n\)`). Either resets to *running*
+  when output resumes. Best-effort; a native adapter is authoritative.
+- **Add from the dashboard:** the harness picker's `+` opens a form (name / command /
+  prompt arg) that appends a generic `[harness.name]` block to `config.toml`, reloads,
+  and selects it — so a new harness is registered without editing files by hand.
 
 ## 6. Session state model
 

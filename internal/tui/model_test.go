@@ -25,6 +25,7 @@ func newTestModel(sessions []*session.Session) model {
 		composer:    textarea.New(),
 		renameInput: textinput.New(),
 		filterInput: textinput.New(),
+		formInputs:  newFormInputs(),
 		onComposer:  true,
 		harnesses:   harnessNames(cfg),
 		width:       120,

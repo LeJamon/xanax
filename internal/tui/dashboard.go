@@ -25,10 +25,11 @@ import (
 
 // Deps are the services the dashboard needs from the CLI layer.
 type Deps struct {
-	Store     *store.Store
-	Cfg       *config.Config
-	SelfPath  string // path to the xanax binary, for shelling out
-	SocketDir string
+	Store      *store.Store
+	Cfg        *config.Config
+	SelfPath   string // path to the xanax binary, for shelling out
+	SocketDir  string
+	ConfigPath string // config.toml, for adding harnesses from the dashboard
 	// Scope, when set, restricts the dashboard to sessions under this absolute
 	// path and launches new sessions there. Empty = all sessions, cwd launches.
 	Scope string
@@ -62,6 +63,11 @@ type model struct {
 	filtering   bool
 	filter      string
 	filterInput textinput.Model
+
+	addingHarness bool
+	formInputs    []textinput.Model
+	formField     int
+	formErr       string
 
 	gitCache     map[string]gitInfo // live branch/PR per repo path
 	gitPollCount int                // gates the slower PR refresh
@@ -126,6 +132,7 @@ func Run(deps Deps) error {
 		composer:    ta,
 		renameInput: ri,
 		filterInput: fi,
+		formInputs:  newFormInputs(),
 		onComposer:  true,
 		harnesses:   harnessNames(deps.Cfg),
 	}
@@ -276,6 +283,9 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.renaming {
 		return m.updateRenameKey(msg)
 	}
+	if m.addingHarness {
+		return m.updateFormKey(msg)
+	}
 	if m.picking {
 		return m.updatePickKey(msg)
 	}
@@ -366,8 +376,11 @@ func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // updatePickKey runs while the harness picker is open: ↑/↓ move, Enter picks,
-// Esc/Tab cancels.
+// '+' opens the add-harness form, Esc/Tab cancels.
 func (m model) updatePickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyRunes && string(msg.Runes) == "+" {
+		return m.startAddHarness()
+	}
 	switch msg.Type {
 	case tea.KeyUp:
 		if m.pickIdx > 0 {

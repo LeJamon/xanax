@@ -47,6 +47,9 @@ func applyTheme(t config.Theme) {
 	prStyle = lipgloss.NewStyle().Foreground(colPR)
 }
 
+// whiteText is the style for editable input text.
+func whiteText() lipgloss.Style { return lipgloss.NewStyle().Foreground(colWhite) }
+
 // hRules wraps content with full-width top and bottom horizontal rules only
 // (no left/right border), colored as given. Used to mark the selected session
 // (accent) and frame the prompt box (grey).
