@@ -153,12 +153,15 @@ Unix socket server ──► attach / input / resize / subscribe / kill / info
     the supervisor stays quiet (no double replies).
 - **Detach triggers.** The attach client detaches on `ctrl+\` (configurable
   `interact_exit_key`) **or the Left arrow** — Left returns you to the dashboard and is
-  therefore not forwarded to the harness. The Left arrow is recognized in every
-  encoding a harness may negotiate through the passthrough: legacy `ESC[D`, application
-  cursor `ESCOD`, and the Kitty keyboard protocol's parameterized forms (`ESC[1D`,
-  `ESC[1;1D`, release/repeat events) that harnesses like codex push (`CSI > u`). Only
-  the *unmodified* Left detaches; `Ctrl`/`Alt`/`Shift`+Left pass through for word
-  navigation and selection.
+  therefore not forwarded to the harness. Both triggers are recognized in every
+  encoding a harness may negotiate through the passthrough. The Left arrow: legacy
+  `ESC[D`, application cursor `ESCOD`, and the Kitty keyboard protocol's parameterized
+  forms (`ESC[1D`, `ESC[1;1D`) that harnesses like codex push (`CSI > u`). The exit key:
+  the raw control byte and, under the Kitty disambiguate flag, its `CSI u` form (`ctrl+\`
+  → `ESC[92;5u`). Only an *unmodified key press* detaches: `Ctrl`/`Alt`/`Shift`+Left pass
+  through for word navigation and selection, and repeat/release events are ignored so a
+  modifier released just before Left (reported as an unmodified Left release) does not
+  eject you mid-edit.
 
 ## 5. Adapter architecture
 

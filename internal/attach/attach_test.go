@@ -120,15 +120,29 @@ func TestFindDetach(t *testing.T) {
 		{"earliest wins: arrow before exit", []byte{0x1b, '[', 'D', exit}, 0, 3},
 		{"earliest wins: exit before arrow", []byte{exit, 0x1b, '[', 'D'}, 0, 1},
 		// Kitty keyboard protocol: harnesses like codex push CSI > u, so the
-		// Left arrow arrives as a parameterized CSI. Unmodified forms detach.
+		// Left arrow arrives as a parameterized CSI. Unmodified presses detach.
 		{"kitty report-all-keys", []byte{0x1b, '[', '1', 'D'}, 0, 4},
 		{"kitty unmodified press", []byte{0x1b, '[', '1', ';', '1', 'D'}, 0, 6},
-		{"kitty unmodified release", []byte{0x1b, '[', '1', ';', '1', ':', '3', 'D'}, 0, 8},
-		{"kitty unmodified repeat", []byte{0x1b, '[', '1', ';', '1', ':', '2', 'D'}, 0, 8},
-		{"kitty arrow after text", append([]byte("x"), 0x1b, '[', '1', ';', '1', ':', '3', 'D'), 1, 8},
+		{"kitty explicit press event", []byte{0x1b, '[', '1', ';', '1', ':', '1', 'D'}, 0, 8},
+		{"kitty press after text", append([]byte("x"), 0x1b, '[', '1', ';', '1', 'D'), 1, 6},
+		// Repeat and release events are not presses, so they must not detach: a
+		// modifier released a beat before Left reports the Left release with no
+		// modifiers (ESC[1;1:3D), which must not eject the user mid-edit.
+		{"kitty unmodified release is not detach", []byte{0x1b, '[', '1', ';', '1', ':', '3', 'D'}, -1, 0},
+		{"kitty unmodified repeat is not detach", []byte{0x1b, '[', '1', ';', '1', ':', '2', 'D'}, -1, 0},
+		// A non-Left key code sharing the final 'D' (e.g. ANSI cursor-back-N,
+		// common in pasted terminal output) is not the Left arrow.
+		{"csi cursor-back-5 is not detach", []byte{0x1b, '[', '5', 'D'}, -1, 0},
+		{"csi cursor-back-3 is not detach", []byte{0x1b, '[', '3', 'D'}, -1, 0},
+		{"csi other keycode is not detach", []byte{0x1b, '[', '5', '7', '4', '4', '4', ';', '1', 'D'}, -1, 0},
 		// Coalesced press+release from one Left tap (report-event-types on):
 		// the press matches first. This is the case the old exact-match missed.
 		{"kitty press then release coalesced", []byte{0x1b, '[', '1', ';', '1', 'D', 0x1b, '[', '1', ';', '1', ':', '3', 'D'}, 0, 6},
+		// Lock states (num_lock=128, caps_lock=64) are not real modifiers, so a
+		// plain Left with Num/Caps Lock on still detaches (ESC[1;129D / ESC[1;65D).
+		{"kitty left with num lock detaches", []byte{0x1b, '[', '1', ';', '1', '2', '9', 'D'}, 0, 8},
+		{"kitty left with caps lock detaches", []byte{0x1b, '[', '1', ';', '6', '5', 'D'}, 0, 7},
+		{"kitty ctrl+left with num lock is not detach", []byte{0x1b, '[', '1', ';', '1', '3', '3', 'D'}, -1, 0},
 		// Modified Left passes through to the harness (word nav / selection).
 		{"kitty ctrl+left is not detach", []byte{0x1b, '[', '1', ';', '5', 'D'}, -1, 0},
 		{"kitty alt+left is not detach", []byte{0x1b, '[', '1', ';', '3', 'D'}, -1, 0},
@@ -136,8 +150,23 @@ func TestFindDetach(t *testing.T) {
 		{"kitty ctrl+right is not detach", []byte{0x1b, '[', '1', ';', '5', 'C'}, -1, 0},
 		// A modified arrow still lets a following exit key detach.
 		{"modified arrow then exit", []byte{0x1b, '[', '1', ';', '5', 'D', exit}, 6, 1},
-		// Partial sequence at a read boundary: no match (dropped, as before).
+		// Partial sequence at a read boundary: no match; the prefix is forwarded
+		// and the detach is missed (an accepted limitation).
 		{"partial kitty csi", []byte{0x1b, '[', '1', ';'}, -1, 0},
+		// Exit key (ctrl+\) under the Kitty protocol: the disambiguate flag
+		// encodes it as a CSI-u sequence (ESC[92;5u, codepoint 92 = '\', mod 5 =
+		// 1+ctrl) instead of the raw 0x1c byte, so a raw scan alone would miss it.
+		{"kitty exit key csi-u", []byte{0x1b, '[', '9', '2', ';', '5', 'u'}, 0, 7},
+		{"kitty exit key csi-u after text", append([]byte("hi"), 0x1b, '[', '9', '2', ';', '5', 'u'), 2, 7},
+		{"kitty exit key csi-u explicit press", []byte{0x1b, '[', '9', '2', ';', '5', ':', '1', 'u'}, 0, 9},
+		{"kitty exit key csi-u release is not detach", []byte{0x1b, '[', '9', '2', ';', '5', ':', '3', 'u'}, -1, 0},
+		// Ctrl held alongside num lock (mod 133 = 1+ctrl+num_lock) still detaches.
+		{"kitty exit key csi-u with num lock", []byte{0x1b, '[', '9', '2', ';', '1', '3', '3', 'u'}, 0, 9},
+		// Backslash without ctrl (mod 1) is a literal key, not the exit chord.
+		{"kitty backslash without ctrl is not detach", []byte{0x1b, '[', '9', '2', ';', '1', 'u'}, -1, 0},
+		{"kitty backslash report-all-keys is not detach", []byte{0x1b, '[', '9', '2', 'u'}, -1, 0},
+		// A different ctrl chord (ctrl+a = ESC[97;5u) is not the exit ctrl+\.
+		{"kitty other ctrl chord is not detach", []byte{0x1b, '[', '9', '7', ';', '5', 'u'}, -1, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
