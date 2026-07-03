@@ -89,3 +89,19 @@ func TestGitInfoMsgPreservesPRBetweenPolls(t *testing.T) {
 		t.Errorf("PR not preserved between polls: %+v", m.gitCache["/r"])
 	}
 }
+
+// TestGitInfoMsgDropsPROnBranchChange verifies a checkout invalidates the
+// cached PR: a branch-only poll reporting a different branch must not keep the
+// previous branch's PR number (which would render "newbranch · #oldPR").
+func TestGitInfoMsgDropsPROnBranchChange(t *testing.T) {
+	m := newTestModel(nil)
+	// PR poll: feature/x has open PR #7.
+	next, _ := m.Update(gitInfoMsg{infos: map[string]gitInfo{"/r": {branch: "feature/x", pr: "7"}}, polledPR: true})
+	m = next.(model)
+	// Branch-only poll after switching to main — the stale PR must be dropped.
+	next, _ = m.Update(gitInfoMsg{infos: map[string]gitInfo{"/r": {branch: "main"}}, polledPR: false})
+	m = next.(model)
+	if got := m.gitCache["/r"]; got.branch != "main" || got.pr != "" {
+		t.Errorf("stale PR carried across branch change: %+v", got)
+	}
+}

@@ -480,6 +480,83 @@ func TestApplyThemeChangesColors(t *testing.T) {
 	}
 }
 
+// TestReloadKeepsSelectionByID guards against the cursor (a list index) sliding
+// onto a different session when the periodic reload re-sorts the list — which
+// would make k/enter act on the wrong session.
+func TestReloadKeepsSelectionByID(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 2) // the completed row, last
+	selID := m.current().ID
+
+	// A new waiting session appears; grouped() sorts it to the top, pushing the
+	// completed row's index from 2 to 3.
+	extra := &session.Session{
+		ID: "wait0002", Title: "new", Harness: "pi", RepoPath: "/x/d",
+		Status: session.StatusWaiting, CreatedAt: time.Now(),
+	}
+	next, _ := m.Update(sessionsMsg{sessions: grouped(append(sampleSessions(), extra))})
+	m = next.(model)
+
+	if got := m.current(); got == nil || got.ID != selID {
+		t.Fatalf("selection not preserved by ID across reload: got %v, want %s", got, selID)
+	}
+}
+
+// TestReloadWhileFilteringZeroKeepsSelection guards the case where a background
+// reload arrives while the filter bar is open and currently matches nothing:
+// it must not yank focus to the composer (which would silently drop the
+// selection once matches return).
+func TestReloadWhileFilteringZeroKeepsSelection(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	m = send(m, "/")
+	for _, r := range "zzz" { // matches nothing
+		m = send(m, string(r))
+	}
+	if len(m.sessions) != 0 {
+		t.Fatalf("expected 0 matches, got %d", len(m.sessions))
+	}
+	next, _ := m.Update(sessionsMsg{sessions: grouped(sampleSessions())})
+	m = next.(model)
+	if m.onComposer {
+		t.Error("reload during an empty filter stole focus to the composer")
+	}
+	if !m.filtering {
+		t.Error("filter bar should stay open across the reload")
+	}
+}
+
+// TestReloadEmptyWithFilterFocusesComposer guards the flip side of the case
+// above: when the underlying list becomes genuinely empty while a filter string
+// is still set (e.g. the last matching session was removed with k), the
+// composer MUST be focused — otherwise current() is nil and every keystroke is
+// silently dropped with no way back but the arrow keys.
+func TestReloadEmptyWithFilterFocusesComposer(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	m.filter = "refactor" // applied filter matching one session
+	m.sessions = filterSessions(m.allSessions, m.filter)
+	// That session is removed → the reload delivers zero sessions.
+	next, _ := m.Update(sessionsMsg{sessions: nil})
+	m = next.(model)
+	if !m.onComposer {
+		t.Fatal("genuinely-empty list with a filter set must focus the composer")
+	}
+}
+
+// TestEscClearsFilterWhenAllHidden verifies Esc still clears an applied filter
+// when it currently hides every row (current() == nil), so the user is never
+// trapped in an empty filtered view.
+func TestEscClearsFilterWhenAllHidden(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	m.filter = "zzz" // applied filter that matches nothing
+	m.sessions = filterSessions(m.allSessions, m.filter)
+	if len(m.sessions) != 0 {
+		t.Fatalf("expected 0 matches, got %d", len(m.sessions))
+	}
+	m = send(m, "esc")
+	if m.filter != "" || len(m.sessions) != 3 {
+		t.Errorf("esc did not clear filter on empty view: filter=%q n=%d", m.filter, len(m.sessions))
+	}
+}
+
 func TestViewRendersWithoutPanic(t *testing.T) {
 	m := newTestModel(sampleSessions())
 	out := m.View()

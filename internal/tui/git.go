@@ -1,12 +1,23 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+)
+
+// Bounds on the best-effort VCS lookups. Without them a wedged git or gh
+// (network stall, credential prompt) blocks its poll goroutine forever, and a
+// fresh one is spawned every tick — so hung children accumulate. git is local
+// and fast; gh makes a network call, so it gets more slack.
+const (
+	gitLookupTimeout = 3 * time.Second
+	ghLookupTimeout  = 5 * time.Second
 )
 
 // gitInfo is the live VCS context for a repo, shown right-aligned on its rows.
@@ -39,7 +50,9 @@ func gitPollCmd(repos []string, pollPR bool) tea.Cmd {
 // gitBranchOf returns the current branch, or "" if repo is not a git repo or
 // is in detached-HEAD state.
 func gitBranchOf(repo string) string {
-	out, err := exec.Command("git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), gitLookupTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
 		return ""
 	}
@@ -56,7 +69,9 @@ func ghPRNumber(repo, branch string) string {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return ""
 	}
-	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "1")
+	ctx, cancel := context.WithTimeout(context.Background(), ghLookupTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "1")
 	cmd.Dir = repo
 	out, err := cmd.Output()
 	if err != nil {
