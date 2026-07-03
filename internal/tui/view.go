@@ -57,10 +57,13 @@ func (m model) inputBlock() string {
 // renderPreview shows a peek of the selected session's screen once space has
 // opened the preview and a snapshot has been fetched.
 func (m model) renderPreview() string {
-	if !m.previewOn || m.onComposer || m.previewText == "" || m.previewID != m.selectedID() {
+	if !m.previewOn || m.onComposer || m.previewText == "" {
 		return ""
 	}
-	label := mutedStyle.Render("Preview  ·  " + m.previewID[:min(8, len(m.previewID))])
+	// previewText is only ever stored for the selected session (see the previewMsg
+	// handler), so the selected id is the preview's id.
+	id := m.selectedID()
+	label := mutedStyle.Render("Preview  ·  " + id[:min(8, len(id))])
 	body := lipgloss.NewStyle().Foreground(colMuted).Render(m.previewText)
 	return label + "\n" + hRules(colMuted, m.width).Render(body)
 }
