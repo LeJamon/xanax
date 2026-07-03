@@ -17,11 +17,13 @@ import (
 )
 
 func newTestModel(sessions []*session.Session) model {
+	cfg := config.Default()
 	m := model{
-		deps:        Deps{Cfg: config.Default(), SocketDir: "/tmp/xanax-nonexistent-test"},
+		deps:        Deps{Cfg: cfg, SocketDir: "/tmp/xanax-nonexistent-test"},
 		composer:    textarea.New(),
 		renameInput: textinput.New(),
 		onComposer:  true,
+		harnesses:   harnessNames(cfg),
 		width:       120,
 		height:      40,
 		sessions:    grouped(sessions),
@@ -42,6 +44,10 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "ctrl+o":
+		return tea.KeyMsg{Type: tea.KeyCtrlO}
 	case "ctrl+k":
 		return tea.KeyMsg{Type: tea.KeyCtrlK}
 	default:
@@ -215,6 +221,92 @@ func TestRenameEscCancels(t *testing.T) {
 	m = next.(model)
 	if m.renaming {
 		t.Error("esc did not cancel rename")
+	}
+}
+
+func TestHarnessNamesDefaultFirst(t *testing.T) {
+	cfg := config.Default() // default_harness = opencode, plus pi
+	names := harnessNames(cfg)
+	if len(names) != 2 || names[0] != "opencode" || names[1] != "pi" {
+		t.Errorf("harnessNames = %v, want [opencode pi]", names)
+	}
+}
+
+func TestTabOpensPickerAndSelectsHarness(t *testing.T) {
+	m := newTestModel(nil) // composer selected
+	m = send(m, "tab")
+	if !m.picking {
+		t.Fatal("tab did not open the harness picker")
+	}
+	m = send(m, "down") // opencode -> pi
+	m = send(m, "enter")
+	if m.picking {
+		t.Fatal("enter did not close the picker")
+	}
+	if m.harness() != "pi" {
+		t.Errorf("harness = %q, want pi after picking", m.harness())
+	}
+	// The choice drives the launch args.
+	args := newSessionArgs(m.harness(), "do things", false)
+	want := []string{"new", "--harness", "pi", "--no-attach", "--", "do things"}
+	if len(args) != len(want) {
+		t.Fatalf("args = %v", args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", args, want)
+		}
+	}
+}
+
+func TestPickerEscCancelsWithoutChanging(t *testing.T) {
+	m := newTestModel(nil)
+	m = send(m, "tab")
+	m = send(m, "down")
+	m = send(m, "esc")
+	if m.picking {
+		t.Fatal("esc did not close the picker")
+	}
+	if m.harness() != "opencode" {
+		t.Errorf("esc changed the harness to %q", m.harness())
+	}
+}
+
+func TestPickerArrowsDoNotMoveSessionSelection(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m = send(m, "tab") // open picker while composer selected
+	m = send(m, "up")  // must move picker highlight, not leave composer
+	if !m.picking {
+		t.Fatal("picker closed unexpectedly")
+	}
+	if !m.onComposer {
+		t.Error("picker arrows leaked into session navigation")
+	}
+}
+
+func TestCtrlOLaunchesAndAttaches(t *testing.T) {
+	m := newTestModel(nil)
+	m.composer.SetValue("hello agent")
+	next, cmd := m.Update(key("ctrl+o"))
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("ctrl+o returned no command")
+	}
+	if m.composer.Value() != "" {
+		t.Errorf("composer not cleared: %q", m.composer.Value())
+	}
+}
+
+func TestNewSessionArgsAttach(t *testing.T) {
+	args := newSessionArgs("opencode", "-starts with dash", true)
+	want := []string{"new", "--harness", "opencode", "--", "-starts with dash"}
+	if len(args) != len(want) {
+		t.Fatalf("args = %v", args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", args, want)
+		}
 	}
 }
 

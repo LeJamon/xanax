@@ -19,9 +19,12 @@ func (m model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.renderList())
 	b.WriteString("\n")
-	if m.renaming {
+	switch {
+	case m.renaming:
 		b.WriteString(m.renderRename())
-	} else {
+	case m.picking:
+		b.WriteString(m.renderPicker())
+	default:
 		b.WriteString(m.renderComposer(m.onComposer))
 	}
 	b.WriteString("\n")
@@ -96,17 +99,39 @@ func (m model) renderRow(s *session.Session, selected bool) string {
 
 // renderComposer draws the always-on prompt block: a label plus the input
 // framed by full-width top+bottom rules — accent when the box is selected
-// (typing goes here), grey otherwise.
+// (typing goes here), grey otherwise. The label names the harness the next
+// session will use; Tab cycles it.
 func (m model) renderComposer(selected bool) string {
 	color := colMuted
 	label := mutedStyle.Render(
-		"New " + m.deps.Cfg.DefaultHarness + " session  ·  ↓ to select, then type a prompt")
+		"New " + m.harness() + " session  ·  ↓ to select, then type a prompt")
 	if selected {
 		color = colAccent
-		label = groupStyle.Foreground(colAccent).Render(
-			"New " + m.deps.Cfg.DefaultHarness + " session  ·  type a prompt, enter to launch")
+		title := groupStyle.Foreground(colAccent).Render("New " + m.harness() + " session")
+		label = title + mutedStyle.Render("  ·  tab to switch harness")
 	}
 	return label + "\n" + hRules(color, m.width).Render(m.composer.View())
+}
+
+// renderPicker draws the harness selector in the composer's slot: one row per
+// configured harness, ↑/↓ to move, enter to pick.
+func (m model) renderPicker() string {
+	label := groupStyle.Foreground(colAccent).Render("Select harness") +
+		mutedStyle.Render("  ·  ↑/↓ move, enter select, esc cancel")
+	var rows []string
+	for i, name := range m.harnesses {
+		adapter := m.deps.Cfg.Harnesses[name].Adapter
+		line := "  " + name
+		if i == m.pickIdx {
+			line = cursorStyle.Render("▸ ") + selectStyle.Render(name)
+		}
+		if i == m.harnessIdx {
+			line += mutedStyle.Render("  (current)")
+		}
+		line += mutedStyle.Render("  · " + adapter)
+		rows = append(rows, line)
+	}
+	return label + "\n" + hRules(colAccent, m.width).Render(strings.Join(rows, "\n"))
 }
 
 // renderRename draws the in-place rename editor for the selected session.
@@ -121,8 +146,10 @@ func (m model) footer() string {
 	switch {
 	case m.renaming:
 		hint = "enter save · esc cancel"
+	case m.picking:
+		hint = "↑/↓ move · enter select · esc cancel"
 	case m.onComposer:
-		hint = "type a prompt · enter launch · ↑ to sessions · ^c quit"
+		hint = "enter launch · ^o launch+attach · tab harness · ↑ sessions · ^c quit"
 	default:
 		hint = "↑/↓ select · →/enter open · e rename · r resume · k remove · ↓ to prompt · ^c quit"
 	}

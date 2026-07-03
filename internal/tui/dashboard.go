@@ -39,6 +39,14 @@ type model struct {
 	deps     Deps
 	composer textarea.Model
 
+	// harnesses lists the configured harness names; harnessIdx selects which
+	// one new sessions launch with. Tab opens a picker (scales to many
+	// harnesses, unlike cycling).
+	harnesses  []string
+	harnessIdx int
+	picking    bool // harness picker is open
+	pickIdx    int  // highlighted row in the picker
+
 	sessions   []*session.Session // display order (grouped)
 	cursor     int                // selected session index (when !onComposer)
 	onComposer bool               // the prompt box is the selected row
@@ -50,6 +58,14 @@ type model struct {
 	width, height int
 	status        string
 	err           error
+}
+
+// harness returns the currently selected harness for new sessions.
+func (m model) harness() string {
+	if len(m.harnesses) == 0 {
+		return m.deps.Cfg.DefaultHarness
+	}
+	return m.harnesses[m.harnessIdx%len(m.harnesses)]
 }
 
 type sessionsMsg struct {
@@ -82,9 +98,28 @@ func Run(deps Deps) error {
 	ri.CharLimit = 120
 	ri.TextStyle = lipgloss.NewStyle().Foreground(colWhite)
 
-	m := model{deps: deps, composer: ta, renameInput: ri, onComposer: true}
+	m := model{
+		deps:        deps,
+		composer:    ta,
+		renameInput: ri,
+		onComposer:  true,
+		harnesses:   harnessNames(deps.Cfg),
+	}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
+}
+
+// harnessNames returns the configured harness names, default first, rest
+// alphabetical — so Tab cycling starts from the default.
+func harnessNames(cfg *config.Config) []string {
+	names := make([]string, 0, len(cfg.Harnesses))
+	for name := range cfg.Harnesses {
+		if name != cfg.DefaultHarness {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return append([]string{cfg.DefaultHarness}, names...)
 }
 
 func (m model) Init() tea.Cmd {
@@ -140,6 +175,9 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.renaming {
 		return m.updateRenameKey(msg)
 	}
+	if m.picking {
+		return m.updatePickKey(msg)
+	}
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Quit
@@ -182,10 +220,26 @@ func (m model) moveDown() (tea.Model, tea.Cmd) {
 	return m, m.composer.Focus()
 }
 
-// updateComposerKey runs while the prompt box is selected: Enter launches a new
-// session, everything else edits the prompt.
+// updateComposerKey runs while the prompt box is selected. Enter launches a
+// new session in the background; Ctrl+O (or Alt+Enter) launches and attaches
+// immediately — landing in the harness's own input, where its native syntax
+// (/commands, @files, completions) is fully available. Tab opens the harness
+// picker. Everything else edits the prompt.
 func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyEnter {
+	switch {
+	case msg.Type == tea.KeyTab:
+		if len(m.harnesses) > 1 {
+			m.picking = true
+			m.pickIdx = m.harnessIdx
+			m.composer.Blur()
+		}
+		return m, nil
+	case msg.Type == tea.KeyCtrlO, msg.Type == tea.KeyEnter && msg.Alt:
+		// Launch + attach; an empty prompt opens a fresh harness to type in.
+		prompt := strings.TrimSpace(m.composer.Value())
+		m.composer.Reset()
+		return m, m.execNewAttach(prompt)
+	case msg.Type == tea.KeyEnter:
 		if prompt := strings.TrimSpace(m.composer.Value()); prompt != "" {
 			m.composer.Reset()
 			return m, m.execNewBackground(prompt)
@@ -195,6 +249,29 @@ func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.composer, cmd = m.composer.Update(msg)
 	return m, cmd
+}
+
+// updatePickKey runs while the harness picker is open: ↑/↓ move, Enter picks,
+// Esc/Tab cancels.
+func (m model) updatePickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyUp:
+		if m.pickIdx > 0 {
+			m.pickIdx--
+		}
+	case tea.KeyDown:
+		if m.pickIdx < len(m.harnesses)-1 {
+			m.pickIdx++
+		}
+	case tea.KeyEnter:
+		m.harnessIdx = m.pickIdx
+		m.picking = false
+		return m, m.composer.Focus()
+	case tea.KeyEsc, tea.KeyTab, tea.KeyCtrlC:
+		m.picking = false
+		return m, m.composer.Focus()
+	}
+	return m, nil
 }
 
 // updateSessionKey runs while a session is selected. Plain letters act on it
@@ -286,16 +363,38 @@ func (m model) execKillRemove(s *session.Session) tea.Cmd {
 	}
 }
 
-// execNewBackground launches a new session in the default harness without
-// attaching, so the user stays on the dashboard. "--" stops flag parsing so
-// prompts beginning with "-" are safe.
+// newSessionArgs builds the `xanax new` argv for the selected harness. "--"
+// stops flag parsing so prompts beginning with "-" are safe.
+func newSessionArgs(harness, prompt string, attach bool) []string {
+	args := []string{"new", "--harness", harness}
+	if !attach {
+		args = append(args, "--no-attach")
+	}
+	return append(args, "--", prompt)
+}
+
+// execNewBackground launches a new session in the selected harness without
+// attaching, so the user stays on the dashboard.
 func (m model) execNewBackground(prompt string) tea.Cmd {
+	h := m.harness()
 	return func() tea.Msg {
-		if err := exec.Command(m.deps.SelfPath, "new", "--no-attach", "--", prompt).Run(); err != nil {
+		if err := exec.Command(m.deps.SelfPath, newSessionArgs(h, prompt, false)...).Run(); err != nil {
 			return actionDoneMsg{status: "launch failed: " + err.Error()}
 		}
-		return actionDoneMsg{status: "launched: " + truncate(prompt, 50)}
+		return actionDoneMsg{status: "launched " + h + ": " + truncate(prompt, 40)}
 	}
+}
+
+// execNewAttach launches a new session and drops straight into the harness's
+// live window (its own input, native /command and @file syntax included).
+func (m model) execNewAttach(prompt string) tea.Cmd {
+	c := exec.Command(m.deps.SelfPath, newSessionArgs(m.harness(), prompt, true)...)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			return actionDoneMsg{status: "launch failed: " + err.Error()}
+		}
+		return actionDoneMsg{}
+	})
 }
 
 func (m model) execRename(id, title string) tea.Cmd {

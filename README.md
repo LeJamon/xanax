@@ -45,8 +45,10 @@ The sessions and the prompt box form one column. `↑`/`↓` always move the sel
 the selected row is framed with accent-colored top/bottom rules.
 
 - **Prompt box selected** (bottom row): type/paste a prompt and press **Enter** to
-  launch a new session in the default harness (no attach — fire off several). You can
-  only type when it's selected.
+  launch a new session in the background (fire off several), or **Ctrl+O** to launch
+  **and attach** — you land in the harness's own input with its native `/commands` and
+  `@file` syntax (empty prompt = fresh harness). **Tab** opens the harness picker to
+  choose which harness the next session uses. You can only type when it's selected.
 - **A session selected:** `→`/`Enter` open its window · `e` rename · `r` resume ·
   `k` remove · `↓` back to the prompt box · `Ctrl+C` quit. (Rename is a xanax-only
   label; it never touches the harness's own session.)
