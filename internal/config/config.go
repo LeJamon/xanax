@@ -34,6 +34,14 @@ type Harness struct {
 	// by the native pi/opencode adapters.
 	PromptArg        string `toml:"prompt_arg,omitempty"`
 	PromptPositional bool   `toml:"prompt_positional,omitempty"`
+
+	// Approximate state detection for the generic adapter (no native state
+	// channel). IdleTimeout marks the session "waiting" after that many seconds
+	// with no output; WaitingPattern is a regexp matched against output that
+	// marks it "waiting" immediately (e.g. a "(y/n)" prompt). Either resets to
+	// "running" when output resumes. Ignored by native adapters.
+	IdleTimeout    int    `toml:"idle_timeout,omitempty"`
+	WaitingPattern string `toml:"waiting_pattern,omitempty"`
 }
 
 // Config is the fully resolved configuration.
@@ -217,6 +225,12 @@ func Load(path string) (*Config, error) {
 		}
 		if fh.PromptPositional {
 			merged.PromptPositional = true
+		}
+		if fh.IdleTimeout != 0 {
+			merged.IdleTimeout = fh.IdleTimeout
+		}
+		if fh.WaitingPattern != "" {
+			merged.WaitingPattern = fh.WaitingPattern
 		}
 		if len(fh.Env) > 0 {
 			if merged.Env == nil {

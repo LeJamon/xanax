@@ -68,6 +68,16 @@ type Supervisor struct {
 	curRows  uint16
 	curCols  uint16
 	killedBy atomic.Bool
+
+	// Non-terminal status tracking, shared by the native state watcher and the
+	// generic inference path (only one is active per session).
+	statusMu  sync.Mutex
+	curStatus session.Status
+	curDetail string
+
+	// Generic state inference (active only when the adapter has no state
+	// channel and the harness configured it).
+	infer *inferer
 	// altScreen is true when the harness has switched to the alternate screen
 	// buffer (i.e. it is a full-screen TUI). Attaching clients then get a clean
 	// repaint instead of a replay of stale frames (SPEC.md §4).
@@ -147,6 +157,11 @@ func (s *Supervisor) run() (int, error) {
 	})
 
 	s.markRunning()
+	// Generic state inference: only when the harness exposes no native state
+	// channel and configured a heuristic.
+	if a.States() == nil {
+		s.infer = newInferer(s.opts.Harness, s.log)
+	}
 	if err := a.AfterStart(s.ptmx); err != nil {
 		s.log.Warn("adapter AfterStart failed", "err", err)
 	}
@@ -157,6 +172,9 @@ func (s *Supervisor) run() (int, error) {
 	go func() { defer wg.Done(); s.acceptClients() }()
 	go func() { defer wg.Done(); s.watchState() }()
 	go s.pollSessionRef() // stops when exited closes
+	if s.infer != nil {
+		go s.idleLoop()
+	}
 
 	exitCode := s.wait()
 	close(s.exited)
@@ -213,6 +231,11 @@ func (s *Supervisor) pumpOutput() {
 				s.altScreen.Store(updateAltScreen(s.altScreen.Load(), emit))
 				s.rawLog.Write(emit)
 				s.hub.broadcastOutput(emit)
+				if s.infer != nil {
+					if st, detail, ok := s.infer.observe(emit); ok {
+						s.applyStatus(st, detail)
+					}
+				}
 			}
 		}
 		if err != nil {
@@ -355,7 +378,6 @@ func (s *Supervisor) watchState() {
 		return
 	}
 	s.stateInfo.had = true
-	prev := session.StatusRunning
 	for ev := range ch {
 		s.stateInfo.saw = true
 		s.stateInfo.last = ev.Kind
@@ -363,15 +385,32 @@ func (s *Supervisor) watchState() {
 		s.opts.Store.RecordEvent(s.opts.Session.ID, "state", map[string]any{
 			"kind": ev.Kind.String(), "detail": ev.Message,
 		})
-		if !change {
-			continue
+		if change {
+			s.applyStatus(status, detail)
 		}
-		if err := s.opts.Store.SetStatus(s.opts.Session.ID, status, detail); err != nil {
-			s.log.Warn("set status failed", "err", err)
-		}
-		s.hub.broadcastState(wire.State{Status: string(status), Detail: detail})
+	}
+}
+
+// applyStatus records a non-terminal status transition: persists it, broadcasts
+// it to attached clients, and notifies on an actual status change. Idempotent
+// on an unchanged (status, detail). Called by the native state watcher and the
+// generic inferer, which never run concurrently for one session.
+func (s *Supervisor) applyStatus(status session.Status, detail string) {
+	s.statusMu.Lock()
+	prev, prevDetail := s.curStatus, s.curDetail
+	if status == prev && detail == prevDetail {
+		s.statusMu.Unlock()
+		return
+	}
+	s.curStatus, s.curDetail = status, detail
+	s.statusMu.Unlock()
+
+	if err := s.opts.Store.SetStatus(s.opts.Session.ID, status, detail); err != nil {
+		s.log.Warn("set status failed", "err", err)
+	}
+	s.hub.broadcastState(wire.State{Status: string(status), Detail: detail})
+	if status != prev {
 		s.raiseNotification(prev, status, detail)
-		prev = status
 	}
 }
 
@@ -443,6 +482,7 @@ func (s *Supervisor) wait() int {
 
 func (s *Supervisor) markRunning() {
 	id := s.opts.Session.ID
+	s.curStatus = session.StatusRunning
 	if err := s.opts.Store.SetRuntime(id, os.Getpid(), s.socketPath(), session.StatusRunning); err != nil {
 		s.log.Warn("mark running failed", "err", err)
 	}
