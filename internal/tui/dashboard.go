@@ -113,7 +113,6 @@ func Run(deps Deps) error {
 	applyTheme(deps.Cfg.Theme) // rebuild styles from the configured theme
 
 	ta := textarea.New()
-	ta.Placeholder = "Paste a prompt and press Enter to launch a new session…"
 	ta.ShowLineNumbers = false
 	ta.Prompt = ""
 	ta.SetHeight(1) // starts one line, auto-grows with content (syncComposerHeight)
