@@ -16,6 +16,10 @@ import (
 type genericAdapter struct {
 	sess *session.Session
 	h    config.Harness
+	// resuming records whether the most recent Launch was a resume, so the PTY
+	// fallback in AfterStart does not re-type the initial prompt into a session
+	// that is only being reattached. Launch always runs before AfterStart.
+	resuming bool
 }
 
 func newGeneric(sess *session.Session, h config.Harness, _ Deps) (Adapter, error) {
@@ -29,6 +33,7 @@ func (a *genericAdapter) promptOnCmdline() bool {
 }
 
 func (a *genericAdapter) Launch(resume bool) (LaunchSpec, error) {
+	a.resuming = resume
 	args := append([]string(nil), a.h.Args...)
 	switch {
 	case resume && len(a.h.ResumeArgs) > 0:
@@ -47,8 +52,8 @@ func (a *genericAdapter) Launch(resume bool) (LaunchSpec, error) {
 }
 
 func (a *genericAdapter) AfterStart(pty io.Writer) error {
-	if a.sess.InitialPrompt == "" || a.promptOnCmdline() {
-		return nil // no prompt, or already delivered on the command line
+	if a.sess.InitialPrompt == "" || a.promptOnCmdline() || a.resuming {
+		return nil // no prompt, already delivered on the command line, or resuming
 	}
 	// Fallback: type the prompt followed by Enter. Line-based CLIs consume it;
 	// full-screen TUIs are better served by prompt_arg/prompt_positional or a

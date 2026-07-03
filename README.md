@@ -96,8 +96,10 @@ branch    = "6"    # git branch on rows
 [harness.goose]
 adapter     = "generic"
 command     = "goose"
-prompt_arg  = "--message"          # pass the prompt as a flag (or prompt_positional = true)
-resume_args = ["session", "-c"]    # continue last session in this repo
+args        = ["session"]                # start goose's interactive session
+resume_args = ["session", "--resume"]    # resume the most recent session
+# A CLI that takes the prompt as a flag can set prompt_arg = "--flag"
+# (or prompt_positional = true) to skip typing it into the PTY.
 ```
 
 ## Layout

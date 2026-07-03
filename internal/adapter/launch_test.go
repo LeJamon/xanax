@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,6 +101,38 @@ func TestGenericDoesNotMutateConfigArgs(t *testing.T) {
 	a.Launch(false)
 	if len(shared) != 1 {
 		t.Errorf("Launch mutated the shared config Args slice: %v", shared)
+	}
+}
+
+// A PTY-delivery generic harness (no prompt_arg/prompt_positional) must type
+// the prompt on a fresh launch but must NOT re-type it on resume — otherwise
+// reattaching a resumable generic session re-runs its initial instruction.
+func TestGenericAfterStartResume(t *testing.T) {
+	sess := &session.Session{ID: "g5", RepoPath: "/r", InitialPrompt: "type me"}
+	h := config.Harness{Adapter: config.AdapterGeneric, Command: "aider", ResumeArgs: []string{"--restore"}}
+
+	// Fresh launch: the PTY fallback types the prompt followed by Enter.
+	a, _ := New(sess, h, testDeps(t))
+	defer a.Close()
+	a.Launch(false)
+	var fresh bytes.Buffer
+	if err := a.AfterStart(&fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.String() != "type me\r" {
+		t.Errorf("fresh AfterStart should type the prompt, got %q", fresh.String())
+	}
+
+	// Resume: the prompt must not be re-typed into the PTY.
+	a2, _ := New(sess, h, testDeps(t))
+	defer a2.Close()
+	a2.Launch(true)
+	var resumed bytes.Buffer
+	if err := a2.AfterStart(&resumed); err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Len() != 0 {
+		t.Errorf("resume AfterStart must not re-type the prompt, got %q", resumed.String())
 	}
 }
 

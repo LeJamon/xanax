@@ -338,11 +338,12 @@ command = "pi"
 
 # Any additional harness works immediately with basic states:
 [harness.goose]
-adapter           = "generic"
-command           = "goose"
-prompt_arg        = "--message"   # deliver the composer prompt as a flag value
-# prompt_positional = true        # …or as the last positional argument
-resume_args       = ["session", "-c"]  # continue last session in this repo
+adapter     = "generic"
+command     = "goose"
+args        = ["session"]                # start goose's interactive session
+resume_args = ["session", "--resume"]    # resume the most recent session
+# A CLI that accepts the prompt as a flag can add prompt_arg = "--flag"
+# (or prompt_positional = true) to deliver it on the command line instead.
 ```
 
 Defaults for opencode and pi are built in; the file is optional.
