@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -255,13 +256,8 @@ func TestTabOpensPickerAndSelectsHarness(t *testing.T) {
 	// The choice drives the launch args.
 	args := newSessionArgs(m.harness(), "", "do things", false)
 	want := []string{"new", "--harness", "pi", "--no-attach", "--", "do things"}
-	if len(args) != len(want) {
-		t.Fatalf("args = %v", args)
-	}
-	for i := range want {
-		if args[i] != want[i] {
-			t.Fatalf("args = %v, want %v", args, want)
-		}
+	if !slices.Equal(args, want) {
+		t.Fatalf("args = %v, want %v", args, want)
 	}
 }
 
@@ -345,13 +341,46 @@ func TestCtrlOLaunchesAndAttaches(t *testing.T) {
 func TestNewSessionArgsAttach(t *testing.T) {
 	args := newSessionArgs("opencode", "", "-starts with dash", true)
 	want := []string{"new", "--harness", "opencode", "--", "-starts with dash"}
-	if len(args) != len(want) {
-		t.Fatalf("args = %v", args)
+	if !slices.Equal(args, want) {
+		t.Fatalf("args = %v, want %v", args, want)
 	}
-	for i := range want {
-		if args[i] != want[i] {
-			t.Fatalf("args = %v, want %v", args, want)
-		}
+}
+
+func TestTabWithSingleHarnessDoesNotOpenPicker(t *testing.T) {
+	m := newTestModel(nil)
+	m.harnesses = []string{"opencode"} // only one configured — nothing to pick
+	m = send(m, "tab")
+	if m.picking {
+		t.Fatal("tab opened the picker with only one harness")
+	}
+	if !m.onComposer {
+		t.Error("tab left the composer instead of falling through to it")
+	}
+}
+
+func TestLaunchFailureRestoresPrompt(t *testing.T) {
+	m := newTestModel(nil)
+	// A launch that failed before the session captured the prompt hands it back
+	// so the user can retry instead of losing what they typed.
+	next, _ := m.Update(actionDoneMsg{status: "launch failed: boom", restorePrompt: "my prompt"})
+	m = next.(model)
+	if m.composer.Value() != "my prompt" {
+		t.Errorf("prompt not restored: %q", m.composer.Value())
+	}
+	if m.status != "launch failed: boom" {
+		t.Errorf("status = %q, want the failure message", m.status)
+	}
+}
+
+func TestLaunchFailureDoesNotClobberNewText(t *testing.T) {
+	m := newTestModel(nil)
+	// The user started typing something new while a background launch was in
+	// flight; a late failure must not overwrite it with the old prompt.
+	m.composer.SetValue("something new")
+	next, _ := m.Update(actionDoneMsg{status: "launch failed: boom", restorePrompt: "old prompt"})
+	m = next.(model)
+	if m.composer.Value() != "something new" {
+		t.Errorf("composer clobbered: %q, want %q", m.composer.Value(), "something new")
 	}
 }
 

@@ -368,9 +368,11 @@ box shows the same rules in grey when it is not the selected row.
 
 - **Prompt box selected:** typed/pasted text goes into it; **Enter** launches a new
   session in the selected harness (current repo, no attach, so you can fire off
-  several). **Ctrl+O** (or Alt+Enter) launches **and attaches** — landing directly in
+  several). **Ctrl+O** launches **and attaches** — landing directly in
   the harness's own input, where its native syntax (`/commands`, `@file` completion,
-  palettes) is fully available; with an empty prompt it opens a fresh harness. xanax
+  palettes) is fully available; with an empty prompt it opens a fresh harness. (**Alt+Enter**
+  is a best-effort alias that works only on terminals reporting it as a single key; Ctrl+O
+  is the portable binding.) xanax
   deliberately does not re-implement harness syntax in its own composer (prompts are
   delivered verbatim; interactive syntax belongs to the harness). **Tab** opens the
   harness picker: a list of all configured harnesses (`↑`/`↓` + Enter, Esc cancels) —

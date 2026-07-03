@@ -81,7 +81,7 @@ func (m model) harness() string {
 	if len(m.harnesses) == 0 {
 		return m.deps.Cfg.DefaultHarness
 	}
-	return m.harnesses[m.harnessIdx%len(m.harnesses)]
+	return m.harnesses[m.harnessIdx]
 }
 
 type sessionsMsg struct {
@@ -89,7 +89,14 @@ type sessionsMsg struct {
 	err      error
 }
 type tickMsg struct{}
-type actionDoneMsg struct{ status string }
+
+// actionDoneMsg reports the result of a shelled-out or background action.
+// restorePrompt, when set, puts a would-be-lost prompt back in the composer
+// (a launch failed before the session captured it, so the user can retry).
+type actionDoneMsg struct {
+	status        string
+	restorePrompt string
+}
 
 // Run starts the dashboard event loop.
 func Run(deps Deps) error {
@@ -134,7 +141,7 @@ func Run(deps Deps) error {
 }
 
 // harnessNames returns the configured harness names, default first, rest
-// alphabetical — so Tab cycling starts from the default.
+// alphabetical — so the picker (opened with Tab) lists the default at the top.
 func harnessNames(cfg *config.Config) []string {
 	names := make([]string, 0, len(cfg.Harnesses))
 	for name := range cfg.Harnesses {
@@ -260,6 +267,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case actionDoneMsg:
 		m.status = msg.status
+		// Put a would-be-lost prompt back, but only if the box is empty — a
+		// background launch stays interactive, so the user may have started
+		// typing something new we must not clobber.
+		if msg.restorePrompt != "" && m.composer.Value() == "" {
+			m.composer.SetValue(msg.restorePrompt)
+		}
 		return m, m.reload()
 
 	case tea.KeyMsg:
@@ -341,12 +354,12 @@ func (m model) afterMove(prevID string, extra tea.Cmd) (tea.Model, tea.Cmd) {
 // picker. Everything else edits the prompt.
 func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case msg.Type == tea.KeyTab:
-		if len(m.harnesses) > 1 {
-			m.picking = true
-			m.pickIdx = m.harnessIdx
-			m.composer.Blur()
-		}
+	case msg.Type == tea.KeyTab && len(m.harnesses) > 1:
+		// Only intercept Tab when there's a choice to make; with a single
+		// harness it falls through to the composer rather than dead-keying.
+		m.picking = true
+		m.pickIdx = m.harnessIdx
+		m.composer.Blur()
 		return m, nil
 	case msg.Type == tea.KeyCtrlO, msg.Type == tea.KeyEnter && msg.Alt:
 		// Launch + attach; an empty prompt opens a fresh harness to type in.
@@ -539,7 +552,7 @@ func (m model) execNewBackground(prompt string) tea.Cmd {
 	h, repo := m.harness(), m.deps.Scope
 	return func() tea.Msg {
 		if err := exec.Command(m.deps.SelfPath, newSessionArgs(h, repo, prompt, false)...).Run(); err != nil {
-			return actionDoneMsg{status: "launch failed: " + err.Error()}
+			return actionDoneMsg{status: "launch failed: " + err.Error(), restorePrompt: prompt}
 		}
 		return actionDoneMsg{status: "launched " + h + ": " + truncate(prompt, 40)}
 	}
@@ -551,7 +564,7 @@ func (m model) execNewAttach(prompt string) tea.Cmd {
 	c := exec.Command(m.deps.SelfPath, newSessionArgs(m.harness(), m.deps.Scope, prompt, true)...)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
-			return actionDoneMsg{status: "launch failed: " + err.Error()}
+			return actionDoneMsg{status: "launch failed: " + err.Error(), restorePrompt: prompt}
 		}
 		return actionDoneMsg{}
 	})
