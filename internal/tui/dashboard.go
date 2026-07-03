@@ -87,7 +87,7 @@ func (m model) harness() string {
 	if len(m.harnesses) == 0 {
 		return m.deps.Cfg.DefaultHarness
 	}
-	return m.harnesses[m.harnessIdx%len(m.harnesses)]
+	return m.harnesses[m.harnessIdx]
 }
 
 type sessionsMsg struct {
@@ -95,7 +95,14 @@ type sessionsMsg struct {
 	err      error
 }
 type tickMsg struct{}
-type actionDoneMsg struct{ status string }
+
+// actionDoneMsg reports the result of a shelled-out or background action.
+// restorePrompt, when set, puts a would-be-lost prompt back in the composer
+// (a launch failed before the session captured it, so the user can retry).
+type actionDoneMsg struct {
+	status        string
+	restorePrompt string
+}
 
 // Run starts the dashboard event loop.
 func Run(deps Deps) error {
@@ -141,7 +148,7 @@ func Run(deps Deps) error {
 }
 
 // harnessNames returns the configured harness names, default first, rest
-// alphabetical — so Tab cycling starts from the default.
+// alphabetical — so the picker (opened with Tab) lists the default at the top.
 func harnessNames(cfg *config.Config) []string {
 	names := make([]string, 0, len(cfg.Harnesses))
 	for name := range cfg.Harnesses {
@@ -219,24 +226,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionsMsg:
 		firstLoad := m.gitCache == nil && len(msg.sessions) > 0
+		prevID := m.selectedID()
 		m.allSessions, m.err = msg.sessions, msg.err
 		m.sessions = filterSessions(m.allSessions, m.filter)
-		if len(m.sessions) == 0 {
-			m.cursor = 0
-			if !m.onComposer {
-				m.onComposer = true
-				return m, m.composer.Focus()
-			}
-		} else if m.cursor > len(m.sessions)-1 {
-			m.cursor = len(m.sessions) - 1
-		}
+		var selCmd tea.Cmd
+		m, selCmd = m.reselect(prevID)
 		if firstLoad {
 			// Show branches promptly rather than waiting for the 5 s git tick
 			// (branches only — the slower gh PR lookup stays on the tick).
 			m.gitCache = make(map[string]gitInfo)
-			return m, gitPollCmd(uniqueRepos(m), false)
+			return m, tea.Batch(selCmd, gitPollCmd(uniqueRepos(m), false))
 		}
-		return m, nil
+		return m, selCmd
 
 	case tickMsg:
 		return m, tea.Batch(m.reload(), tickCmd(), m.previewCmd())
@@ -258,8 +259,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.gitCache = make(map[string]gitInfo)
 		}
 		for repo, gi := range msg.infos {
+			// Branches are polled every tick (~5 s), PR numbers only every ~60 s.
+			// On a branch-only poll keep the cached PR — but only while the branch
+			// is unchanged, since a checkout invalidates the old branch's PR (else
+			// the row would pair the new branch with a stale, unrelated #number).
 			if !msg.polledPR {
-				gi.pr = m.gitCache[repo].pr // preserve the cached PR between PR polls
+				if prev, ok := m.gitCache[repo]; ok && prev.branch == gi.branch {
+					gi.pr = prev.pr
+				}
 			}
 			m.gitCache[repo] = gi
 		}
@@ -267,6 +274,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case actionDoneMsg:
 		m.status = msg.status
+		// Put a would-be-lost prompt back, but only if the box is empty — a
+		// background launch stays interactive, so the user may have started
+		// typing something new we must not clobber.
+		if msg.restorePrompt != "" && m.composer.Value() == "" {
+			m.composer.SetValue(msg.restorePrompt)
+		}
 		return m, m.reload()
 
 	case tea.KeyMsg:
@@ -405,6 +418,13 @@ func (m model) updatePickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // (nothing is typed), so no Ctrl-chords are needed; the Ctrl variants are kept
 // as aliases.
 func (m model) updateSessionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Esc clears an applied filter — checked before the empty-list guard so it
+	// still works when the filter currently hides every row (current() == nil).
+	if msg.Type == tea.KeyEsc && m.filter != "" {
+		m.filter = ""
+		m.sessions = filterSessions(m.allSessions, "")
+		return m, nil
+	}
 	s := m.current()
 	if s == nil {
 		return m, nil
@@ -416,11 +436,6 @@ func (m model) updateSessionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.execKillRemove(s)
 	case tea.KeyCtrlR:
 		return m, m.execInteractive("resume", s.ID)
-	}
-	if msg.Type == tea.KeyEsc && m.filter != "" {
-		m.filter = ""
-		m.sessions = filterSessions(m.allSessions, "")
-		return m, nil
 	}
 	switch msg.String() {
 	case "o":
@@ -552,7 +567,7 @@ func (m model) execNewBackground(prompt string) tea.Cmd {
 	h, repo := m.harness(), m.deps.Scope
 	return func() tea.Msg {
 		if err := exec.Command(m.deps.SelfPath, newSessionArgs(h, repo, prompt, false)...).Run(); err != nil {
-			return actionDoneMsg{status: "launch failed: " + err.Error()}
+			return actionDoneMsg{status: "launch failed: " + err.Error(), restorePrompt: prompt}
 		}
 		return actionDoneMsg{status: "launched " + h + ": " + truncate(prompt, 40)}
 	}
@@ -564,7 +579,7 @@ func (m model) execNewAttach(prompt string) tea.Cmd {
 	c := exec.Command(m.deps.SelfPath, newSessionArgs(m.harness(), m.deps.Scope, prompt, true)...)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
-			return actionDoneMsg{status: "launch failed: " + err.Error()}
+			return actionDoneMsg{status: "launch failed: " + err.Error(), restorePrompt: prompt}
 		}
 		return actionDoneMsg{}
 	})
@@ -606,6 +621,49 @@ func (m model) selectedID() string {
 		return s.ID
 	}
 	return ""
+}
+
+// reselect re-anchors the selection after the periodic reload rebuilt the list.
+// The cursor is an index into a list that grouped() re-sorts by status then
+// recency, so without re-anchoring a status change (or a newly launched
+// session) can slide a different session under the cursor — making k/enter act
+// on the wrong one. It keeps the previously selected session selected by ID
+// when it survived, otherwise clamps into range. It only falls back to the
+// prompt box when there are genuinely no sessions — not while a filter is
+// narrowing the view, where an empty result is transient and Esc still clears
+// the filter.
+func (m model) reselect(prevID string) (model, tea.Cmd) {
+	if len(m.sessions) > 0 {
+		if i := indexOfID(m.sessions, prevID); i >= 0 {
+			m.cursor = i
+		} else if m.cursor > len(m.sessions)-1 {
+			m.cursor = len(m.sessions) - 1
+		}
+		return m, nil
+	}
+	m.cursor = 0
+	// Fall back to the prompt box only when there are genuinely no sessions at
+	// all. While a filter is merely hiding every row (allSessions non-empty),
+	// stay in the list context so an empty filtered view never traps keystrokes
+	// and Esc still clears the filter.
+	if !m.onComposer && len(m.allSessions) == 0 {
+		m.onComposer = true
+		return m, m.composer.Focus()
+	}
+	return m, nil
+}
+
+// indexOfID returns the index of the session with the given id, or -1.
+func indexOfID(sessions []*session.Session, id string) int {
+	if id == "" {
+		return -1
+	}
+	for i, s := range sessions {
+		if s.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 // previewCmd fetches a peek of the selected session's screen (nothing while

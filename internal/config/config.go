@@ -8,6 +8,8 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -57,7 +59,8 @@ type Config struct {
 }
 
 // Theme colors the dashboard TUI. Each value is an ANSI palette index ("0"–
-// "255") or a hex color ("#rrggbb"). Empty fields fall back to the defaults.
+// "255") or a hex color ("#rgb" or "#rrggbb"). Empty fields fall back to the
+// defaults.
 type Theme struct {
 	Accent    string `toml:"accent"`    // selection / cursor
 	Waiting   string `toml:"waiting"`   // needs-input state
@@ -268,5 +271,52 @@ func (c *Config) validate() error {
 			return fmt.Errorf("harness %q: idle_timeout must be >= 0, got %d", name, h.IdleTimeout)
 		}
 	}
+	if err := c.Theme.validate(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validate rejects theme colors that are neither an ANSI palette index nor a
+// hex color. Load merges defaults in first, so every field is populated here.
+func (t Theme) validate() error {
+	for _, f := range []struct{ name, val string }{
+		{"accent", t.Accent},
+		{"waiting", t.Waiting},
+		{"running", t.Running},
+		{"completed", t.Completed},
+		{"failed", t.Failed},
+		{"cancelled", t.Cancelled},
+		{"muted", t.Muted},
+		{"text", t.Text},
+		{"branch", t.Branch},
+		{"pr", t.PR},
+	} {
+		if !validColor(f.val) {
+			return fmt.Errorf("theme %s: invalid color %q (want ANSI index \"0\"–\"255\" or hex \"#rgb\"/\"#rrggbb\")",
+				f.name, f.val)
+		}
+	}
+	return nil
+}
+
+// validColor reports whether s is one of the forms lipgloss.Color renders: an
+// ANSI palette index ("0"–"255"), or a hex color in short "#rgb" or long
+// "#rrggbb" form (both accepted by go-colorful's Hex, which the renderer uses).
+func validColor(s string) bool {
+	if strings.HasPrefix(s, "#") {
+		if len(s) != 4 && len(s) != 7 {
+			return false
+		}
+		for _, c := range s[1:] {
+			switch {
+			case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+			default:
+				return false
+			}
+		}
+		return true
+	}
+	n, err := strconv.Atoi(s)
+	return err == nil && n >= 0 && n <= 255
 }

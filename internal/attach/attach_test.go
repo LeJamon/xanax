@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -85,6 +86,20 @@ func TestRunResetsTerminalModesOnDetach(t *testing.T) {
 	out := <-got
 	if !bytes.Contains(out, resetModes) {
 		t.Errorf("terminal reset sequence not written on detach; got %q", out)
+	}
+}
+
+// TestResetModesDisablesHarnessInputModes guards that every mouse/paste/focus
+// mode a harness may enable through the passthrough (mouse 1000/1002/1003 with
+// the SGR 1006 and urxvt 1015 encodings, bracketed paste 2004, focus 1004) is
+// disabled on detach — otherwise it leaks into the dashboard. urxvt (1015) in
+// particular was once missing next to SGR (1006).
+func TestResetModesDisablesHarnessInputModes(t *testing.T) {
+	for _, n := range []int{1000, 1002, 1003, 1006, 1015, 2004, 1004} {
+		seq := []byte("\x1b[?" + strconv.Itoa(n) + "l")
+		if !bytes.Contains(resetModes, seq) {
+			t.Errorf("resetModes does not disable mode %d (missing %q)", n, seq)
+		}
 	}
 }
 

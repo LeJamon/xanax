@@ -85,7 +85,7 @@ command = "opencode"
 adapter = "pi"
 command = "pi"
 
-# Optional TUI colors — ANSI palette index ("0"–"255") or hex ("#rrggbb").
+# Optional TUI colors — ANSI palette index ("0"–"255") or hex ("#rgb"/"#rrggbb").
 # Any omitted field keeps its default; see `xanax config` for the full set.
 [theme]
 accent    = "13"   # selection / cursor

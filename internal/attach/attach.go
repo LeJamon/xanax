@@ -22,10 +22,15 @@ import (
 
 // resetModes returns the client's terminal to a sane state when the
 // attachment ends. Terminals ignore the sequences they don't support.
+//
+// It must disable every input mode the harness may have enabled through the
+// passthrough: the harness only turns these off when it exits, not on detach,
+// so any one left set here leaks into the dashboard. The mouse group covers
+// both the SGR (1006) and urxvt (1015) encodings.
 var resetModes = []byte("" +
 	"\x1b[<u\x1b[<u\x1b[<u" + // pop Kitty keyboard flags (no-op when stack empty)
 	"\x1b[=0;1u" + //           force Kitty keyboard flags to zero
-	"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" + // mouse tracking off
+	"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l" + // mouse tracking off (SGR + urxvt)
 	"\x1b[?2004l" + // bracketed paste off
 	"\x1b[?1004l" + // focus reporting off
 	"\x1b[?2026l" + // synchronized output off

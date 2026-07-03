@@ -153,3 +153,43 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 		t.Fatalf("want unknown-key error, got %v", err)
 	}
 }
+
+func TestLoadRejectsInvalidThemeColor(t *testing.T) {
+	for _, bad := range []string{"256", "300", "-1", "gren", "13.5", "0x0d",
+		"#zzzzzz", "#ff88", "#ff8800aa", "13 ", " 13"} {
+		path := writeConfig(t, "[theme]\naccent = \""+bad+"\"\n")
+		_, err := config.Load(path)
+		if err == nil || !strings.Contains(err.Error(), "theme accent") {
+			t.Errorf("accent=%q: want theme-color error, got %v", bad, err)
+		}
+	}
+}
+
+func TestLoadAcceptsValidThemeColors(t *testing.T) {
+	path := writeConfig(t, `
+[theme]
+accent    = "0"
+waiting   = "255"
+running   = "#ff8800"
+completed = "#FFAA00"
+failed    = "#f80"
+cancelled = "#FFF"
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Theme.Accent != "0" || cfg.Theme.Running != "#ff8800" || cfg.Theme.Failed != "#f80" {
+		t.Errorf("valid theme colors not applied: %+v", cfg.Theme)
+	}
+}
+
+// The built-in defaults must themselves pass validation. Load merges DefaultTheme
+// under any present config, so an empty file routes every default field through
+// validate — this fails loudly if a default is ever set to an invalid color.
+func TestDefaultThemePassesValidation(t *testing.T) {
+	path := writeConfig(t, "auto_resume = true\n")
+	if _, err := config.Load(path); err != nil {
+		t.Fatalf("default theme failed validation: %v", err)
+	}
+}
