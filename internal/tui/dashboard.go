@@ -78,6 +78,10 @@ type model struct {
 	width, height int
 	status        string
 	err           error
+
+	// confirmQuit is armed by the first Ctrl+C; the next Ctrl+C (before any
+	// other key) quits. Any other key disarms it. See updateKey / footer.
+	confirmQuit bool
 }
 
 const previewRows = 8
@@ -290,10 +294,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Ctrl+C always quits, regardless of mode (Esc is the cancel key).
+	// Ctrl+C is a two-step exit, regardless of mode (Esc is the cancel key):
+	// the first press arms a confirmation, the second quits.
 	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
+		if m.confirmQuit {
+			return m, tea.Quit
+		}
+		m.confirmQuit = true
+		return m, nil
 	}
+	// Any other key disarms a pending quit confirmation.
+	m.confirmQuit = false
 	if m.renaming {
 		return m.updateRenameKey(msg)
 	}

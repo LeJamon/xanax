@@ -19,6 +19,13 @@ var (
 	footerStyle, errStyle, fieldStyle, branchStyle, prStyle      lipgloss.Style
 )
 
+// warnStyle marks a transient safety prompt (the "press Ctrl+C again to exit"
+// confirmation). Fixed orange (256-color 214), independent of the theme so the
+// caution always reads as a caution whatever palette the user chose. 214 is
+// deliberate: on a 16-color terminal it degrades to bright yellow, not red, so
+// the prompt stays "orange or yellow" everywhere rather than mimicking an error.
+var warnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+
 func init() { applyTheme(config.DefaultTheme()) }
 
 // applyTheme rebuilds every color and derived style from t. t is expected to

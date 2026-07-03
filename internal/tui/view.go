@@ -227,6 +227,10 @@ func (m model) renderRename() string {
 }
 
 func (m model) footer() string {
+	// A pending quit confirmation takes over the footer with a caution prompt.
+	if m.confirmQuit {
+		return warnStyle.Render("Press Ctrl+C again to exit xanax")
+	}
 	var hint string
 	switch {
 	case m.addingHarness:

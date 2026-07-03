@@ -271,33 +271,82 @@ func isQuit(cmd tea.Cmd) bool {
 	return ok
 }
 
-func TestCtrlCQuitsFromEveryMode(t *testing.T) {
-	// Composer focused.
-	m := newTestModel(sampleSessions())
-	if _, cmd := m.Update(key("ctrl+c")); !isQuit(cmd) {
-		t.Error("ctrl+c did not quit from the composer")
+func TestCtrlCConfirmsThenQuitsFromEveryMode(t *testing.T) {
+	// In every mode the first Ctrl+C arms the confirmation (no quit); the
+	// second Ctrl+C quits.
+	cases := []struct {
+		name  string
+		build func() model
+	}{
+		{"composer", func() model { return newTestModel(sampleSessions()) }},
+		{"session selected", func() model { return selectSession(newTestModel(sampleSessions()), 0) }},
+		{"harness picker", func() model {
+			m := send(newTestModel(nil), "tab")
+			if !m.picking {
+				t.Fatal("picker did not open")
+			}
+			return m
+		}},
+		{"renaming", func() model {
+			m := send(selectSession(newTestModel(sampleSessions()), 0), "e")
+			if !m.renaming {
+				t.Fatal("rename did not open")
+			}
+			return m
+		}},
+		{"filtering", func() model {
+			m := send(selectSession(newTestModel(sampleSessions()), 0), "/")
+			if !m.filtering {
+				t.Fatal("filter did not open")
+			}
+			return m
+		}},
+		{"add-harness form", func() model {
+			m := send(send(newTestModel(nil), "tab"), "+")
+			if !m.addingHarness {
+				t.Fatal("add-harness form did not open")
+			}
+			return m
+		}},
 	}
-	// Session selected.
-	m2 := selectSession(newTestModel(sampleSessions()), 0)
-	if _, cmd := m2.Update(key("ctrl+c")); !isQuit(cmd) {
-		t.Error("ctrl+c did not quit with a session selected")
+	for _, tc := range cases {
+		next, cmd := tc.build().Update(key("ctrl+c"))
+		if isQuit(cmd) {
+			t.Errorf("%s: first ctrl+c quit; want a confirmation prompt", tc.name)
+		}
+		armed := next.(model)
+		if !armed.confirmQuit {
+			t.Errorf("%s: first ctrl+c did not arm confirmQuit", tc.name)
+		}
+		if _, cmd := armed.Update(key("ctrl+c")); !isQuit(cmd) {
+			t.Errorf("%s: second ctrl+c did not quit", tc.name)
+		}
 	}
-	// Harness picker open.
-	m3 := send(newTestModel(nil), "tab")
-	if !m3.picking {
-		t.Fatal("picker did not open")
+}
+
+// TestCtrlCConfirmDisarmsOnOtherKey checks that any non-Ctrl+C keystroke cancels
+// a pending quit confirmation, and that the footer shows the prompt while armed.
+func TestCtrlCConfirmDisarmsOnOtherKey(t *testing.T) {
+	next, _ := newTestModel(sampleSessions()).Update(key("ctrl+c"))
+	armed := next.(model)
+	if !armed.confirmQuit {
+		t.Fatal("ctrl+c did not arm confirmQuit")
 	}
-	if _, cmd := m3.Update(key("ctrl+c")); !isQuit(cmd) {
-		t.Error("ctrl+c did not quit from the harness picker")
+	if !strings.Contains(armed.footer(), "again to exit") {
+		t.Error("footer did not show the confirm-exit prompt while armed")
 	}
-	// Renaming.
-	m4 := selectSession(newTestModel(sampleSessions()), 0)
-	m4 = send(m4, "e")
-	if !m4.renaming {
-		t.Fatal("rename did not open")
+	// Typing a character both disarms the confirmation and still reaches the
+	// composer — the disarming keystroke must not be swallowed.
+	after, cmd := armed.Update(key("x"))
+	if isQuit(cmd) {
+		t.Error("a non-ctrl+c key quit while the confirmation was armed")
 	}
-	if _, cmd := m4.Update(key("ctrl+c")); !isQuit(cmd) {
-		t.Error("ctrl+c did not quit while renaming")
+	m := after.(model)
+	if m.confirmQuit {
+		t.Error("a non-ctrl+c key did not disarm confirmQuit")
+	}
+	if m.composer.Value() != "x" {
+		t.Errorf("disarming keystroke was swallowed: composer = %q, want %q", m.composer.Value(), "x")
 	}
 }
 
