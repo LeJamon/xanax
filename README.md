@@ -27,15 +27,19 @@ Runs on macOS and Linux.
 ## Usage
 
 ```sh
-xanax                                    # dashboard (default)
+xanax                                    # dashboard: all sessions
+xanax ~/code/api                         # dashboard scoped to one path
 xanax new --harness opencode "fix the failing tests"
 xanax new --harness pi --repo ~/code/api "add pagination"
 xanax list [--json]
 xanax attach <id>                        # reattach to a live session
 xanax resume <id>                        # reattach, or relaunch a dead one natively
 xanax kill   <id>
+xanax logs   <id> [-f]                   # print (or follow) a session's raw output
 xanax config                             # print resolved config + paths
 ```
+
+Given a path, the dashboard shows only sessions under it and launches new ones there.
 
 Session IDs accept unique prefixes (git-style).
 
@@ -50,8 +54,10 @@ the selected row is framed with accent-colored top/bottom rules.
   `@file` syntax (empty prompt = fresh harness). **Tab** opens the harness picker to
   choose which harness the next session uses. You can only type when it's selected.
 - **A session selected:** `→`/`Enter` open its window · `e` rename · `r` resume ·
-  `k` remove · `↓` back to the prompt box · `Ctrl+C` quit. (Rename is a xanax-only
-  label; it never touches the harness's own session.)
+  `k` remove · `/` filter · `↓` back to the prompt box · `Ctrl+C` quit. (Rename is a
+  xanax-only label; it never touches the harness's own session.) A live peek of the
+  selected session's screen shows in a pane above the prompt, and each row shows its
+  live git branch (and open PR number, via `gh`) on the right.
 - **Session window:** opening a session drops you into the harness's own live TUI (the
   conversation). Press **Left arrow** (or `ctrl+\`) to detach — the session keeps
   running in the background; **Right arrow** from the list opens it. (Left/right are
@@ -68,6 +74,7 @@ Optional, at `~/.config/xanax/config.toml`. opencode and pi work with no config.
 ```toml
 default_harness   = "opencode"
 auto_resume       = true
+notifications     = true
 interact_exit_key = "ctrl+\\"
 
 [harness.opencode]
