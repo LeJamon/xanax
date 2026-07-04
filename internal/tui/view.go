@@ -10,6 +10,69 @@ import (
 	"xanax/internal/session"
 )
 
+// pickerModalHeight returns the number of rows the modal picker occupies.
+func (m model) pickerModalHeight() int {
+	return min(18, max(10, m.height/3))
+}
+
+// renderPickerCentered renders the picker modal with centered layout.
+func (m model) renderPickerCentered() string {
+	label := groupStyle.Foreground(colAccent).Render("Switch harness") +
+		mutedStyle.Render("  ·  type to search, d set default · ↑/↓ · enter · esc")
+	var b strings.Builder
+	b.WriteString(label)
+	b.WriteString("\n")
+	// Search bar (framed).
+	search := hRules(colAccent, m.width)
+	b.WriteString(search.Render(m.searchInput.View()))
+	// Harness list.
+	filtered := m.filteredHarnesses()
+	visible := m.pickerModalHeight() - 4 // minus title, search, separator, hint
+	if visible < 3 {
+		visible = 3
+	}
+	start := m.pickScroll
+	if start > len(filtered)-visible {
+		start = max(0, len(filtered)-visible)
+	}
+	end := min(start+visible, len(filtered))
+	var rows []string
+	for i := start; i < end; i++ {
+		name := filtered[i]
+		adapter := m.deps.Cfg.Harnesses[name].Adapter
+		line := "  " + name
+		local := i - start
+		if local == m.pickIdx {
+			line = cursorStyle.Render("▸ ") + selectStyle.Render(name)
+		}
+		// Show (current) for the harness the next session uses.
+		currentName := m.harnesses[m.harnessIdx]
+		if name == currentName {
+			line += mutedStyle.Render("  · " + adapter + "  (current)")
+		} else if name == m.deps.Cfg.DefaultHarness {
+			line += mutedStyle.Render("  · " + adapter + "  (default)")
+		} else {
+			line += mutedStyle.Render("  · " + adapter)
+		}
+		rows = append(rows, line)
+	}
+	list := hRules(colAccent, m.width)
+	b.WriteString(list.Render(strings.Join(rows, "\n")))
+	// Hint.
+	var hint string
+	if len(filtered) > 0 {
+		hint = "  "
+		if len(filtered) >= visible {
+			hint += "↑↓ scroll · "
+		}
+		hint += "d set default · + add · enter select · esc cancel"
+	} else {
+		hint = "  no matching harness"
+	}
+	b.WriteString(hint)
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (m model) View() string {
 	if m.width == 0 {
 		return "loading…"
@@ -18,22 +81,39 @@ func (m model) View() string {
 	if p := m.renderPreview(); p != "" {
 		top += "\n" + p
 	}
-	bottom := m.inputBlock() + "\n" + m.footer()
-
-	// Clamp every line to the terminal width so nothing soft-wraps. lipgloss
-	// measures newline-delimited lines, so a wrapped header (long path, error,
-	// or filter) or footer hint would make the gap math below undercount the
-	// real rows and push the prompt off the bottom of the screen.
+	// Clamp every line to the terminal width so nothing soft-wraps.
 	fit := lipgloss.NewStyle().MaxWidth(m.width)
-	top, bottom = fit.Render(top), fit.Render(bottom)
+	top = fit.Render(top)
 
-	// Pin the prompt box and footer to the bottom of the screen, filling the gap
-	// between the session list and the input so a short list doesn't leave the
-	// composer floating mid-screen. When content is taller than the terminal the
-	// gap collapses to a single blank line and the top scrolls off, keeping the
-	// prompt in view.
+	if m.picking {
+		return m.renderCenteredPicker(top)
+	}
+
+	bottom := m.inputBlock() + "\n" + m.footer()
+	bottom = fit.Render(bottom)
+
 	gap := max(1, m.height-lipgloss.Height(top)-lipgloss.Height(bottom)+1)
 	return top + strings.Repeat("\n", gap) + bottom
+}
+
+// renderCenteredPicker renders the picker modal centered in the terminal.
+func (m model) renderCenteredPicker(top string) string {
+	topRows := lipgloss.Height(top)
+	modalRows := m.pickerModalHeight()
+	footerRows := lipgloss.Height(m.footer())
+	gap := max(0, m.height-topRows-modalRows-footerRows-2)
+	footerFit := lipgloss.NewStyle().MaxWidth(m.width)
+	footer := footerFit.Render(m.footer())
+
+	var b strings.Builder
+	b.WriteString(top)
+	if gap > 0 {
+		b.WriteString(strings.Repeat("\n", gap))
+	}
+	b.WriteString(m.renderPickerCentered())
+	b.WriteString("\n\n")
+	b.WriteString(footer)
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // inputBlock renders whichever editor occupies the bottom prompt slot: the
