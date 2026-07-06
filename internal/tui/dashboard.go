@@ -452,14 +452,17 @@ func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyTab:
 		// Always open the picker — even with one (or zero) harnesses it is the
-		// only way to reach the '+' add-harness form.
+		// only way to reach the '+' add-harness form. It opens with the search box
+		// focused (type to filter); Tab inside toggles to the single-key action row.
 		m.picking = true
 		m.pickIdx = m.harnessIdx
 		m.search = ""
+		m.searchInput.SetValue("")
 		m.pickScroll = 0
-		m.searchFocused = false
+		m.searchFocused = true
+		m.ensurePickVisible() // reveal the current harness even when it sits below the fold
 		m.composer.Blur()
-		return m, nil
+		return m, m.searchInput.Focus()
 	case msg.Type == tea.KeyCtrlO, msg.Type == tea.KeyEnter && msg.Alt:
 		// Launch + attach; an empty prompt opens a fresh harness to type in.
 		prompt := strings.TrimSpace(m.composer.Value())
@@ -502,76 +505,82 @@ func (m *model) syncComposerHeight() {
 	m.composer.SetHeight(min(max(rows, 1), maxRows))
 }
 
-// updatePickKey runs while the harness picker is open: search input on top,
-// ↑/↓ navigate the filtered list, Enter picks, 'd' sets default, '+' adds,
-// Esc/Tab cancels.
+// updatePickKey runs while the harness picker is open. It opens with the search
+// box focused: printable keys filter, ↑/↓ move the highlight, Enter selects,
+// Esc cancels, '+' adds. Tab toggles to the action row, where 'd' sets the
+// highlighted harness as default and 'm' modifies it — single keys that would
+// otherwise be swallowed as search text.
 func (m model) updatePickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// '+' always opens the add-harness form, even when the search bar is focused.
+	// '+' always opens the add-harness form, in either focus.
 	if msg.Type == tea.KeyRunes && string(msg.Runes) == "+" {
 		return m.startAddHarness()
 	}
-	// When the search input is NOT focused: 'd' sets default, 'm' modifies the
-	// highlighted harness; any other letter focuses the search bar.
-	if !m.searchFocused && msg.Type == tea.KeyRunes {
-		if string(msg.Runes) == "d" {
-			return m.setDefaultHarness()
-		}
-		if string(msg.Runes) == "m" {
-			return m.startModifyHarness()
-		}
-		r := string(msg.Runes)
-		if len(r) == 1 && (r[0] >= 'a' && r[0] <= 'z' || r[0] >= 'A' && r[0] <= 'Z' || r[0] >= '0' && r[0] <= '9' || r[0] == '-' || r[0] == '_') {
-			m.searchInput.SetValue(r)
-			m.search = r
-			m.pickIdx = 0
-			m.pickScroll = 0
-			m.searchFocused = true
+	// Navigation, selection and cancel behave the same whether or not the search
+	// box holds focus, so the arrows move the list even while filtering.
+	switch msg.Type {
+	case tea.KeyUp:
+		m.movePick(-1)
+		return m, nil
+	case tea.KeyDown:
+		m.movePick(1)
+		return m, nil
+	case tea.KeyEnter:
+		return m.pickHarness()
+	case tea.KeyEsc:
+		return m.cancelPick()
+	case tea.KeyTab:
+		m.searchFocused = !m.searchFocused
+		if m.searchFocused {
 			return m, m.searchInput.Focus()
 		}
-		// Other rune keys are ignored in the list.
+		m.searchInput.Blur()
 		return m, nil
 	}
-	// When the search input has focus, delegate keys to it.
 	if m.searchFocused {
-		switch msg.Type {
-		case tea.KeyTab:
-			m.searchInput.Blur()
-			m.searchFocused = false
-			return m, nil
-		case tea.KeyEsc:
-			return m.cancelPick()
-		case tea.KeyEnter:
-			// Enter in the search bar selects the highlighted harness.
-			return m.pickHarness()
-		}
+		// Typing filters the list; the highlight resets to the top match.
 		var cmd tea.Cmd
 		m.searchInput, cmd = m.searchInput.Update(msg)
 		m.search = m.searchInput.Value()
-		m.clampPickIdx()
+		m.pickIdx = 0
+		m.pickScroll = 0
 		return m, cmd
 	}
-	filtered := m.filteredHarnesses()
-	switch msg.Type {
-	case tea.KeyUp:
-		if m.pickIdx > 0 {
-			m.pickIdx--
-			if m.pickIdx < m.pickScroll {
-				m.pickScroll--
-			}
+	// Action row: single-key harness commands.
+	if msg.Type == tea.KeyRunes {
+		switch string(msg.Runes) {
+		case "d":
+			return m.setDefaultHarness()
+		case "m":
+			return m.startModifyHarness()
 		}
-	case tea.KeyDown:
-		if m.pickIdx < len(filtered)-1 {
-			m.pickIdx++
-			if m.pickIdx >= m.pickScroll+m.visibleRows() {
-				m.pickScroll++
-			}
-		}
-	case tea.KeyEnter:
-		return m.pickHarness()
-	case tea.KeyEsc, tea.KeyTab:
-		return m.cancelPick()
 	}
 	return m, nil
+}
+
+// movePick moves the highlight by delta within the filtered list, scrolling the
+// window so the selected row stays visible.
+func (m *model) movePick(delta int) {
+	n := len(m.filteredHarnesses())
+	if n == 0 {
+		return
+	}
+	m.pickIdx = min(max(m.pickIdx+delta, 0), n-1)
+	m.ensurePickVisible()
+}
+
+// ensurePickVisible scrolls the picker window so pickIdx lands within the
+// visible rows — used on open (the selection may sit below the fold) and after
+// each move.
+func (m *model) ensurePickVisible() {
+	vis := m.visibleRows()
+	if m.pickIdx < m.pickScroll {
+		m.pickScroll = m.pickIdx
+	} else if m.pickIdx >= m.pickScroll+vis {
+		m.pickScroll = m.pickIdx - vis + 1
+	}
+	if m.pickScroll < 0 {
+		m.pickScroll = 0
+	}
 }
 
 // filteredHarnesses returns harness names matching the search text,
@@ -595,21 +604,6 @@ func (m model) filteredHarnesses() []string {
 func (m model) visibleRows() int {
 	h := min(16, max(8, m.height/3))
 	return max(5, h-4)
-}
-
-// clampPickIdx ensures pickIdx is within the filtered range and resets scroll.
-func (m *model) clampPickIdx() {
-	filtered := m.filteredHarnesses()
-	if len(filtered) == 0 {
-		return
-	}
-	if m.pickIdx >= len(filtered) {
-		m.pickIdx = len(filtered) - 1
-	}
-	if m.pickIdx < 0 {
-		m.pickIdx = 0
-	}
-	m.pickScroll = 0
 }
 
 // pickHarness selects the highlighted harness and closes the picker.

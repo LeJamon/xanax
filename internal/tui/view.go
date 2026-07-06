@@ -435,7 +435,11 @@ func (m model) footer() string {
 	case m.renaming:
 		hint = "enter save · esc cancel"
 	case m.picking:
-		hint = "type to search · d default · m modify · + add · ↑/↓ · enter · esc"
+		if m.searchFocused {
+			hint = "type to search · ↑/↓ move · enter select · + add · tab for d/m · esc"
+		} else {
+			hint = "d default · m modify · ↑/↓ move · enter select · + add · tab search · esc"
+		}
 	case m.filtering:
 		hint = "type to filter · enter apply · esc clear"
 	case m.onComposer:

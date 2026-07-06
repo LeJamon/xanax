@@ -52,11 +52,12 @@ func openModify(t *testing.T, m model, name string) model {
 	return next.(model)
 }
 
-// TestPickerMKeyOpensModify confirms 'm' in the picker opens the form in modify
-// mode, targeting the highlighted harness.
+// TestPickerMKeyOpensModify confirms 'm' on the action row opens the form in
+// modify mode, targeting the highlighted harness.
 func TestPickerMKeyOpensModify(t *testing.T) {
 	m := newTestModel(nil) // built-ins: opencode (default, highlighted), pi
-	m = send(m, "tab")
+	m = send(m, "tab")     // open picker (search focused)
+	m = send(m, "tab")     // switch to the action row so 'm' is a command
 	m = send(m, "m")
 	if !m.addingHarness || m.editHarness != "opencode" {
 		t.Fatalf("m did not open modify for opencode: adding=%v edit=%q", m.addingHarness, m.editHarness)
@@ -157,6 +158,39 @@ env = {"FOO" = "bar"}
 	}
 	if !slices.Equal(h.ResumeArgs, []string{"--resume"}) || !h.PromptPositional || h.Env["FOO"] != "bar" {
 		t.Errorf("hidden fields not preserved: %+v", h)
+	}
+}
+
+// TestModifyPreservesArgsWithSpaces confirms a save that leaves the command
+// field untouched keeps an arg that contains a space, instead of re-splitting
+// it on whitespace.
+func TestModifyPreservesArgsWithSpaces(t *testing.T) {
+	m, path := configModel(t, `default_harness = "opencode"
+
+[harness.goose]
+adapter = "generic"
+command = "goose"
+args = ["--message", "hello world"]
+`)
+	m = openModify(t, m, "goose")
+	// Save without touching the command field; edit only an unrelated field.
+	m.formInputs[fieldPromptArg].SetValue("--msg")
+
+	next, _ := m.submitHarness()
+	m = next.(model)
+	if m.formErr != "" {
+		t.Fatalf("submit failed: %q", m.formErr)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	h := cfg.Harnesses["goose"]
+	if !slices.Equal(h.Args, []string{"--message", "hello world"}) {
+		t.Errorf("args = %v, want [--message, \"hello world\"]", h.Args)
+	}
+	if h.PromptArg != "--msg" {
+		t.Errorf("prompt_arg = %q, want --msg", h.PromptArg)
 	}
 }
 

@@ -95,10 +95,7 @@ func (m model) startModifyHarness() (tea.Model, tea.Cmd) {
 	m.formField = 0
 	m.formErr = ""
 
-	command := h.Command
-	if len(h.Args) > 0 {
-		command = strings.Join(append([]string{h.Command}, h.Args...), " ")
-	}
+	command := harnessCommandField(h)
 	idle := ""
 	if h.IdleTimeout > 0 {
 		idle = strconv.Itoa(h.IdleTimeout)
@@ -238,8 +235,14 @@ func (m model) writeHarness(existing *config.Config, spec harnessSpec) error {
 		return writeHarnessBlock(m.deps.ConfigPath, spec)
 	}
 	h := existing.Harnesses[m.editHarness]
-	h.Command = spec.command
-	h.Args = spec.args
+	// Keep the original command/args when the command field round-trips to the
+	// same text: splitting it on spaces would otherwise corrupt an arg that
+	// legitimately contains one (e.g. args = ["--message", "hello world"]) on a
+	// save that never touched the field.
+	if harnessCommandField(config.Harness{Command: spec.command, Args: spec.args}) != harnessCommandField(h) {
+		h.Command = spec.command
+		h.Args = spec.args
+	}
 	h.PromptArg = spec.promptArg
 	h.IdleTimeout = spec.idleTimeout
 	h.WaitingPattern = spec.waitingPattern
@@ -250,6 +253,18 @@ func (m model) writeHarness(existing *config.Config, spec harnessSpec) error {
 		return setDefaultInConfig(m.deps.ConfigPath, spec.name)
 	}
 	return nil
+}
+
+// harnessCommandField renders a harness's command and args as the single
+// space-joined string the form's command field shows and re-parses. Modify
+// pre-fills from it and compares against it, so a save that leaves the field
+// untouched keeps the original args verbatim instead of re-splitting one that
+// happens to contain a space.
+func harnessCommandField(h config.Harness) string {
+	if len(h.Args) == 0 {
+		return h.Command
+	}
+	return strings.Join(append([]string{h.Command}, h.Args...), " ")
 }
 
 // parseHarnessForm validates the form inputs and returns the harness to write.

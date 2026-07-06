@@ -27,11 +27,11 @@ func newTestModel(sessions []*session.Session) model {
 		composer:    textarea.New(),
 		renameInput: textinput.New(),
 		filterInput: textinput.New(),
-		formInputs:    newFormInputs(),
-		onComposer:    true,
-		harnesses:     harnessNames(cfg),
-		searchInput:   textinput.New(),
-		width:         120,
+		formInputs:  newFormInputs(),
+		onComposer:  true,
+		harnesses:   harnessNames(cfg),
+		searchInput: textinput.New(),
+		width:       120,
 		height:      40,
 		allSessions: grp,
 		sessions:    grp,
@@ -378,6 +378,7 @@ func TestPickerArrowsDoNotMoveSessionSelection(t *testing.T) {
 		t.Error("picker arrows leaked into session navigation")
 	}
 }
+
 // TestPickerSearchFiltering confirms that typing letters filters the harness
 // list, and the current pickIdx is clamped to the filtered results.
 func TestPickerSearchFiltering(t *testing.T) {
@@ -405,25 +406,60 @@ func TestPickerSearchFiltering(t *testing.T) {
 	}
 }
 
-// TestPickerSearchClearOnEscBlursSearch verifies Esc from search bar closes
-// the picker (single Esc closes everything from the picker).
+// TestPickerSearchEsc verifies Esc from the search box closes the picker (a
+// single Esc closes everything from the picker).
 func TestPickerSearchEsc(t *testing.T) {
 	m := newTestModel(nil)
 	m = send(m, "tab")
-	m = send(m, "p") // focus search bar
+	m = send(m, "p") // type into the search box
 	if !m.searchFocused {
 		t.Fatal("search not focused")
 	}
-	// Esc from search bar blurs it and closes picker.
+	// Esc from the search box closes the picker.
 	m = send(m, "esc")
 	if m.picking {
 		t.Fatal("esc did not close picker")
 	}
 }
 
+// TestPickerOpensSearchable confirms the picker opens with the search box
+// focused so a letter filters rather than triggering a command — in particular
+// 'd' must not silently change the default harness.
+func TestPickerOpensSearchable(t *testing.T) {
+	m := newTestModel(nil)
+	m = send(m, "tab")
+	if !m.searchFocused {
+		t.Fatal("picker should open with the search box focused")
+	}
+	m = send(m, "d") // 'd' filters here; it only sets the default on the action row
+	if !m.picking {
+		t.Fatal("'d' closed the picker instead of filtering")
+	}
+	if m.search != "d" {
+		t.Errorf("search = %q, want d", m.search)
+	}
+}
 
-// TestPickerDefaultKey ensures pressing 'd' while a harness is highlighted
-// sets it as the default in the config.
+// TestPickerArrowsNavigateWhileSearching confirms ↑/↓ move the highlight even
+// while the search box is focused, so a non-top match can be selected.
+func TestPickerArrowsNavigateWhileSearching(t *testing.T) {
+	m := newTestModel(nil) // opencode (default), pi
+	m = send(m, "tab")
+	if !m.searchFocused {
+		t.Fatal("picker should open with the search box focused")
+	}
+	m = send(m, "down") // navigate to pi while still in the search box
+	if m.pickIdx != 1 {
+		t.Fatalf("pickIdx = %d, want 1 (arrows must navigate while searching)", m.pickIdx)
+	}
+	m = send(m, "enter")
+	if m.harness() != "pi" {
+		t.Errorf("selected harness = %q, want pi", m.harness())
+	}
+}
+
+// TestPickerDefaultKey ensures pressing 'd' on the action row while a harness is
+// highlighted sets it as the default in the config.
 func TestPickerDefaultKey(t *testing.T) {
 	m := newTestModel(nil)
 	tmpDir := t.TempDir()
@@ -432,9 +468,9 @@ func TestPickerDefaultKey(t *testing.T) {
 	os.WriteFile(cfgPath, []byte(data), 0o600)
 	m.deps.ConfigPath = cfgPath
 
-	m = send(m, "tab")   // open picker, pickIdx = 0 (opencode)
-	m = send(m, "down")   // move to pi (pickIdx = 1)
-	// Check pickIdx moved: filtered[1] = "pi"
+	m = send(m, "tab")  // open picker (search focused), pickIdx = 0 (opencode)
+	m = send(m, "tab")  // switch to the action row so 'd' is a command
+	m = send(m, "down") // move to pi (pickIdx = 1)
 	if m.pickIdx != 1 {
 		t.Errorf("pickIdx = %d, want 1", m.pickIdx)
 	}
@@ -447,11 +483,6 @@ func TestPickerDefaultKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload config: %v", err)
 	}
-	// Debug: check the model and file
-	fileData, _ := os.ReadFile(cfgPath)
-	t.Logf("m.deps.ConfigPath = %q", m.deps.ConfigPath)
-	t.Logf("file content after send(m, 'd'): %q", string(fileData))
-	t.Logf("m.deps.Cfg.DefaultHarness = %q", m.deps.Cfg.DefaultHarness)
 	if cfg.DefaultHarness != "pi" {
 		t.Errorf("default_harness = %q, want pi", cfg.DefaultHarness)
 	}
@@ -500,7 +531,6 @@ func TestPickerScroll(t *testing.T) {
 		t.Error("pickScroll should have increased")
 	}
 }
-
 
 func TestCtrlOLaunchesAndAttaches(t *testing.T) {
 	m := newTestModel(nil)
