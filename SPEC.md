@@ -351,6 +351,9 @@ branch = "6"
 # action. `xanax config` prints the full resolved set. `confirm`/`cancel` are the
 # shared primary/back keys reused across the composer, picker, filter, rename and
 # harness form; the interact-mode detach key is separate (interact_exit_key).
+# Precedence: `quit` is matched before every mode, and `up`/`down` before the
+# session list and composer, so if you bind one of them to a key a context action
+# also uses (e.g. up = ["up", "k"] while remove keeps "k"), the global one wins.
 [keys]
 remove = ["k", "ctrl+k"]         # override just the actions you want to remap
 filter = ["ctrl+f", "/"]
@@ -440,7 +443,9 @@ box shows the same rules in grey when it is not the selected row.
 - Every dashboard key above is a default, not a hard-coded binding: the `[keys]`
   table in the config (§8) remaps any of them, and the footer hints follow suit.
   Only the interact-mode detach key lives elsewhere (`interact_exit_key`), since
-  it is read inside the raw passthrough rather than the dashboard.
+  it is read inside the raw passthrough rather than the dashboard. `quit` is
+  resolved before any mode and `up`/`down` before the session list and composer,
+  so a key bound to one of those wins over a context action bound to the same key.
 - **Keybindings editor** (`s`): a centered, searchable modal — the same style as
   the harness picker — listing every action with its current keys. `↑`/`↓` move and
   Enter starts a capture for the highlighted action; then press one or more keys

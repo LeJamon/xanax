@@ -100,6 +100,9 @@ func (m model) captureKeyBinding(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.commitCapture()
 	}
 	key := canonKey(msg.String())
+	if key == "" {
+		return m, nil // ignore key events bubbletea reports with no name
+	}
 	if !slices.Contains(m.settingsPending, key) {
 		m.settingsPending = append(m.settingsPending, key)
 	}
@@ -162,9 +165,12 @@ func (m *model) moveSettings(delta int) {
 }
 
 // setKeyBindingInConfig writes `<action> = [<keys>]` under the [keys] table in
-// the config file, replacing an existing line for that action or inserting one,
-// and creating the [keys] table when absent. Everything else in the file — other
-// bindings, tables, comments — is preserved. Reuses tomlStringArray for quoting.
+// the config file, replacing an existing assignment for that action or inserting
+// one, and creating the [keys] table when absent. Everything else in the file —
+// other bindings, tables, comments — is preserved. It tolerates the hand-written
+// TOML the user is invited to edit: an inline comment or interior spacing on the
+// [keys] header, tab- or multi-space-aligned assignments, and multi-line array
+// values. Reuses tomlStringArray for quoting.
 func setKeyBindingInConfig(path, action string, keys []string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -176,10 +182,10 @@ func setKeyBindingInConfig(path, action string, keys []string) error {
 	line := fmt.Sprintf("%s = %s", action, tomlStringArray(keys))
 	lines := strings.Split(string(data), "\n")
 
-	// Find the [keys] table header.
+	// Find the [keys] table header (ignoring an inline comment or interior spaces).
 	start := -1
 	for i, ln := range lines {
-		if strings.TrimSpace(ln) == "[keys]" {
+		if tomlTableName(ln) == "keys" {
 			start = i
 			break
 		}
@@ -198,22 +204,33 @@ func setKeyBindingInConfig(path, action string, keys []string) error {
 		return os.WriteFile(path, []byte(b.String()), 0o600)
 	}
 
-	// The table runs to the next header (or EOF). Replace the action's line if it
-	// is already there; the name+boundary check keeps a prefix like "quit" from
-	// matching "quit_list".
+	// The table runs to the next table header (or EOF). Replace the action's
+	// assignment if it is already there. Matching the key left of '=' keeps a
+	// prefix like "quit" from hitting "quit_list" and handles any alignment.
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
-		if strings.HasPrefix(strings.TrimSpace(lines[i]), "[") {
+		if tomlTableName(lines[i]) != "" {
 			end = i
 			break
 		}
 	}
 	for i := start + 1; i < end; i++ {
-		t := strings.TrimSpace(lines[i])
-		if t == action || strings.HasPrefix(t, action+" ") || strings.HasPrefix(t, action+"=") {
-			lines[i] = line
-			return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600)
+		if tomlAssignmentKey(lines[i]) != action {
+			continue
 		}
+		// Extend over a multi-line array value so its continuation lines are not
+		// orphaned (the writer emits single-line arrays, but the file may be
+		// hand-written).
+		last := i
+		for depth := tomlBracketDelta(lines[i]); depth > 0 && last+1 < end; {
+			last++
+			depth += tomlBracketDelta(lines[last])
+		}
+		out := make([]string, 0, len(lines)-(last-i))
+		out = append(out, lines[:i]...)
+		out = append(out, line)
+		out = append(out, lines[last+1:]...)
+		return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
 	}
 	// Not present — insert right after the [keys] header.
 	out := make([]string, 0, len(lines)+1)
@@ -221,4 +238,84 @@ func setKeyBindingInConfig(path, action string, keys []string) error {
 	out = append(out, line)
 	out = append(out, lines[start+1:]...)
 	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
+}
+
+// tomlTableName returns the bare name of a TOML table header line ("[keys]" ->
+// "keys", "[ keys ]  # note" -> "keys"), or "" when the line is not a table
+// header. It lets the writer locate the [keys] table even when the header
+// carries an inline comment or interior spacing.
+func tomlTableName(line string) string {
+	s := strings.TrimSpace(line)
+	if i := strings.IndexByte(s, '#'); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if len(s) < 2 || s[0] != '[' || s[len(s)-1] != ']' {
+		return ""
+	}
+	return strings.TrimSpace(s[1 : len(s)-1])
+}
+
+// tomlAssignmentKey returns the key a TOML assignment line binds — the text left
+// of its first top-level '=' — or "" when the line is blank, a comment, or an
+// array continuation. A '=' inside a string is ignored so a value never looks
+// like a key. This matches "remove =", "remove\t=" and "remove=" alike.
+func tomlAssignmentKey(line string) string {
+	inBasic, inLiteral := false, false
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case inBasic:
+			if c == '\\' {
+				i++ // skip the escaped char
+			} else if c == '"' {
+				inBasic = false
+			}
+		case inLiteral:
+			if c == '\'' {
+				inLiteral = false
+			}
+		case c == '"':
+			inBasic = true
+		case c == '\'':
+			inLiteral = true
+		case c == '#':
+			return "" // a comment before any '='
+		case c == '=':
+			return strings.TrimSpace(line[:i])
+		}
+	}
+	return ""
+}
+
+// tomlBracketDelta returns the net array-bracket depth ('[' minus ']') a line
+// contributes, ignoring brackets inside strings and after a '#' comment. A
+// positive running total across lines means an array value is still open, so its
+// assignment continues onto the next line.
+func tomlBracketDelta(line string) int {
+	depth := 0
+	inBasic, inLiteral := false, false
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case inBasic:
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				inBasic = false
+			}
+		case inLiteral:
+			if c == '\'' {
+				inLiteral = false
+			}
+		case c == '"':
+			inBasic = true
+		case c == '\'':
+			inLiteral = true
+		case c == '#':
+			return depth
+		case c == '[':
+			depth++
+		case c == ']':
+			depth--
+		}
+	}
+	return depth
 }
