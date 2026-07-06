@@ -851,13 +851,16 @@ func (m model) execRename(id, title string) tea.Cmd {
 	}
 }
 
-// openSession enters the live agent window, or resumes it natively if the
-// supervisor is gone but a harness session ref was captured.
+// openSession enters the live agent window, or resumes it natively when the
+// supervisor is gone but the session can still be revived — either a harness
+// session ref was captured or its harness has resume_args (see
+// config.CanResume). This is why a completed session remains openable: it is
+// dead, but resume relaunches it through the harness's own continue mechanism.
 func (m model) openSession(s *session.Session) tea.Cmd {
 	if m.alive(s.ID) {
 		return m.execInteractive("attach", s.ID)
 	}
-	if s.HarnessSessionRef != "" {
+	if m.deps.Cfg.CanResume(s) {
 		return m.execInteractive("resume", s.ID)
 	}
 	msg := "session " + shortID(s.ID) + " has ended — press k to remove"
