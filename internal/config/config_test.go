@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"xanax/internal/config"
+	"xanax/internal/session"
 )
 
 func writeConfig(t *testing.T, content string) string {
@@ -225,5 +226,36 @@ func TestDefaultThemePassesValidation(t *testing.T) {
 	path := writeConfig(t, "auto_resume = true\n")
 	if _, err := config.Load(path); err != nil {
 		t.Fatalf("default theme failed validation: %v", err)
+	}
+}
+
+// CanResume is the shared gate for `xanax resume` and the dashboard's open
+// action. The "generic with resume_args" case is the regression that mattered:
+// generic harnesses never capture a session ref, so a completed session has an
+// empty ref yet must still be openable via its configured resume_args.
+func TestCanResume(t *testing.T) {
+	cfg := &config.Config{Harnesses: map[string]config.Harness{
+		"opencode": {Adapter: config.AdapterOpencode}, // native, no resume_args
+		"codex":    {Adapter: config.AdapterGeneric, ResumeArgs: []string{"resume", "--last"}},
+		"aider":    {Adapter: config.AdapterGeneric}, // generic, nothing
+	}}
+
+	cases := []struct {
+		name string
+		sess *session.Session
+		want bool
+	}{
+		{"captured ref always resumable", &session.Session{Harness: "opencode", HarnessSessionRef: "ses_1"}, true},
+		{"completed generic with resume_args, no ref", &session.Session{Harness: "codex", Status: session.StatusCompleted}, true},
+		{"generic without resume_args", &session.Session{Harness: "aider"}, false},
+		{"native without ref", &session.Session{Harness: "opencode"}, false},
+		{"unknown harness", &session.Session{Harness: "gone"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := cfg.CanResume(c.sess); got != c.want {
+				t.Errorf("CanResume = %v, want %v", got, c.want)
+			}
+		})
 	}
 }

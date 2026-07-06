@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"xanax/internal/session"
 )
 
 // Adapter names accepted in harness configuration.
@@ -56,6 +58,20 @@ type Config struct {
 	Notifications   bool               `toml:"notifications"`
 	Theme           Theme              `toml:"theme"`
 	Harnesses       map[string]Harness `toml:"harness"`
+}
+
+// CanResume reports whether a dead session can be relaunched: either a
+// harness-native session ref was captured (pi/opencode), or its harness has
+// resume_args configured (generic "continue last session in this repo"). This
+// is the single source of truth for both the `xanax resume` CLI path and the
+// dashboard's open-session action, so a terminal session (e.g. completed) that
+// resume can revive is never wrongly reported as unopenable.
+func (c *Config) CanResume(sess *session.Session) bool {
+	if sess.HarnessSessionRef != "" {
+		return true
+	}
+	h, ok := c.Harnesses[sess.Harness]
+	return ok && len(h.ResumeArgs) > 0
 }
 
 // Theme colors the dashboard TUI. Each value is an ANSI palette index ("0"–
