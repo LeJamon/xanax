@@ -18,15 +18,10 @@ func (e *env) socketPath(id string) string {
 	return filepath.Join(e.paths.SocketDir, id+".sock")
 }
 
-// canResume reports whether a dead session can be relaunched: either a
-// harness-native session ref was captured (pi/opencode), or its harness has
-// resume_args configured (generic "continue last session in this repo").
+// canResume reports whether a dead session can be relaunched. It delegates to
+// config.Config.CanResume so the CLI and the dashboard share one definition.
 func (e *env) canResume(sess *session.Session) bool {
-	if sess.HarnessSessionRef != "" {
-		return true
-	}
-	h, ok := e.cfg.Harnesses[sess.Harness]
-	return ok && len(h.ResumeArgs) > 0
+	return e.cfg.CanResume(sess)
 }
 
 // spawnSupervisor starts a detached `xanax _supervise <id>` process that
