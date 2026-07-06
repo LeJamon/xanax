@@ -38,6 +38,9 @@ func TestRunStartsOnCleanSessionScreen(t *testing.T) {
 	if !bytes.Contains(out, []byte("\x1b[?1049h")) || !bytes.Contains(out, []byte("\x1b[2J")) {
 		t.Errorf("clean screen primer is missing alternate-screen or clear-screen; got %q", out)
 	}
+	if bytes.Contains(enterSessionScreen, []byte("\x1b[?25l")) {
+		t.Fatal("clean screen primer must not hide the cursor; line-based sessions may not show it again")
+	}
 }
 
 func runAttachTest(t *testing.T) ([]byte, Result) {

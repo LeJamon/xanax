@@ -42,7 +42,10 @@ var resetModes = []byte("" +
 // enterSessionScreen gives each attach a private, blank screen before any
 // replay or live output arrives. Without this, a slow-starting or line-based
 // session can leave visible pixels from the dashboard or a previous session.
-var enterSessionScreen = []byte("\x1b[?1049h\x1b[?25l\x1b[0m\x1b[2J\x1b[H")
+//
+// Leave cursor visibility alone here: full-screen snapshots manage it while
+// painting, and line-based sessions may not replay a later cursor-show sequence.
+var enterSessionScreen = []byte("\x1b[?1049h\x1b[0m\x1b[2J\x1b[H")
 
 // Result explains why Run returned.
 type Result int
