@@ -344,6 +344,20 @@ accent = "13"
 muted  = "250"
 branch = "6"
 
+# Dashboard key bindings (§10). Each action takes a list of keys; any of them
+# fires it, and an omitted action keeps its default. Keys use bubbletea names —
+# a rune ("o", "/", "+"), a named key ("enter", "up", "tab", "shift+tab"), a
+# control chord ("ctrl+c", "ctrl+o"), or "space". An empty list unbinds an
+# action. `xanax config` prints the full resolved set. `confirm`/`cancel` are the
+# shared primary/back keys reused across the composer, picker, filter, rename and
+# harness form; the interact-mode detach key is separate (interact_exit_key).
+[keys]
+remove = ["k", "ctrl+k"]         # override just the actions you want to remap
+filter = ["ctrl+f", "/"]
+# up, down, confirm, cancel, quit, open, resume, rename, preview, quit_list,
+# launch_attach, harness_picker, add_harness, set_default, modify_harness,
+# toggle_search, form_next, form_prev — all remappable the same way.
+
 [harness.opencode]
 adapter = "opencode"             # native adapter
 command = "opencode"             # override for custom install paths
@@ -422,6 +436,10 @@ box shows the same rules in grey when it is not the selected row.
   that deliver them; `Ctrl+C` always quits.
 - **Rename** opens an inline single-line editor pre-filled with the current title;
   Enter saves to the `sessions.title` column, Esc cancels.
+- Every dashboard key above is a default, not a hard-coded binding: the `[keys]`
+  table in the config (§8) remaps any of them, and the footer hints follow suit.
+  Only the interact-mode detach key lives elsewhere (`interact_exit_key`), since
+  it is read inside the raw passthrough rather than the dashboard.
 - Live updates: the list reloads from SQLite once per second (supervisors are the
   writers). The startup reconciliation pass auto-resumes interrupted sessions (§6)
   before the first render.

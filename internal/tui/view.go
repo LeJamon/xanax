@@ -424,28 +424,41 @@ func (m model) renderRename() string {
 }
 
 func (m model) footer() string {
+	k := m.keys()
 	// A pending quit confirmation takes over the footer with a caution prompt.
 	if m.confirmQuit {
-		return warnStyle.Render("Press Ctrl+C again to exit xanax")
+		return warnStyle.Render("Press " + keyHint(k.Quit) + " again to exit xanax")
 	}
+	// Hints are built from the live bindings (keyHint), so remapping a key in the
+	// config updates the footer to match rather than advertising a stale default.
+	updown := keyHint(k.Up) + "/" + keyHint(k.Down)
 	var hint string
 	switch {
 	case m.addingHarness:
-		hint = "tab next · enter save · esc cancel"
+		hint = fmt.Sprintf("%s next · %s save · %s cancel",
+			keyHint(k.FormNext), keyHint(k.Confirm), keyHint(k.Cancel))
 	case m.renaming:
-		hint = "enter save · esc cancel"
+		hint = fmt.Sprintf("%s save · %s cancel", keyHint(k.Confirm), keyHint(k.Cancel))
 	case m.picking:
 		if m.searchFocused {
-			hint = "type to search · ↑/↓ move · enter select · + add · tab for d/m · esc"
+			hint = fmt.Sprintf("type to search · %s move · %s select · %s add · %s for %s/%s · %s",
+				updown, keyHint(k.Confirm), keyHint(k.AddHarness), keyHint(k.ToggleSearch),
+				keyHint(k.SetDefault), keyHint(k.ModifyHarness), keyHint(k.Cancel))
 		} else {
-			hint = "d default · m modify · ↑/↓ move · enter select · + add · tab search · esc"
+			hint = fmt.Sprintf("%s default · %s modify · %s move · %s select · %s add · %s search · %s",
+				keyHint(k.SetDefault), keyHint(k.ModifyHarness), updown, keyHint(k.Confirm),
+				keyHint(k.AddHarness), keyHint(k.ToggleSearch), keyHint(k.Cancel))
 		}
 	case m.filtering:
-		hint = "type to filter · enter apply · esc clear"
+		hint = fmt.Sprintf("type to filter · %s apply · %s clear", keyHint(k.Confirm), keyHint(k.Cancel))
 	case m.onComposer:
-		hint = "enter launch · ^o launch+attach · tab harness (+ add) · ↑ sessions · ^c quit"
+		hint = fmt.Sprintf("%s launch · %s launch+attach · %s harness (+ add) · %s sessions · %s quit",
+			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),
+			keyHint(k.Up), keyHint(k.Quit))
 	default:
-		hint = "↑/↓ select · →/enter open · space preview · e rename · r resume · k remove · / filter · ^c quit"
+		hint = fmt.Sprintf("%s select · %s open · %s preview · %s rename · %s resume · %s remove · %s filter · %s quit",
+			updown, keyHint(k.Open), keyHint(k.Preview), keyHint(k.Rename),
+			keyHint(k.Resume), keyHint(k.Remove), keyHint(k.Filter), keyHint(k.Quit))
 	}
 	out := footerStyle.Render(hint)
 	if m.status != "" {

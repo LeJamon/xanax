@@ -351,9 +351,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Ctrl+C is a two-step exit, regardless of mode (Esc is the cancel key):
-	// the first press arms a confirmation, the second quits.
-	if msg.Type == tea.KeyCtrlC {
+	// The quit key (Ctrl+C by default) is a two-step exit, regardless of mode
+	// (Cancel/Esc is the per-mode dismiss key): the first press arms a
+	// confirmation, the second quits.
+	if keyMatches(m.keys().Quit, msg) {
 		if m.confirmQuit {
 			return m, tea.Quit
 		}
@@ -389,10 +390,10 @@ func (m model) dispatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.filtering {
 		return m.updateFilterKey(msg)
 	}
-	switch msg.Type {
-	case tea.KeyUp:
+	switch {
+	case keyMatches(m.keys().Up, msg):
 		return m.moveUp()
-	case tea.KeyDown:
+	case keyMatches(m.keys().Down, msg):
 		return m.moveDown()
 	}
 	if m.onComposer {
@@ -449,8 +450,9 @@ func (m model) closeMovedPreview(prevID string) model {
 // (/commands, @files, completions) is fully available. Tab opens the harness
 // picker. Everything else edits the prompt.
 func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	k := m.keys()
 	switch {
-	case msg.Type == tea.KeyTab:
+	case keyMatches(k.HarnessPicker, msg):
 		// Always open the picker — even with one (or zero) harnesses it is the
 		// only way to reach the '+' add-harness form. It opens with the search box
 		// focused (type to filter); Tab inside toggles to the single-key action row.
@@ -463,13 +465,13 @@ func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.ensurePickVisible() // reveal the current harness even when it sits below the fold
 		m.composer.Blur()
 		return m, m.searchInput.Focus()
-	case msg.Type == tea.KeyCtrlO, msg.Type == tea.KeyEnter && msg.Alt:
+	case keyMatches(k.LaunchAttach, msg):
 		// Launch + attach; an empty prompt opens a fresh harness to type in.
 		prompt := strings.TrimSpace(m.composer.Value())
 		m.composer.Reset()
 		m.syncComposerHeight() // shrink back to one line
 		return m, m.execNewAttach(prompt)
-	case msg.Type == tea.KeyEnter:
+	case keyMatches(k.Confirm, msg):
 		if prompt := strings.TrimSpace(m.composer.Value()); prompt != "" {
 			m.composer.Reset()
 			m.syncComposerHeight() // shrink back to one line
@@ -511,24 +513,25 @@ func (m *model) syncComposerHeight() {
 // highlighted harness as default and 'm' modifies it — single keys that would
 // otherwise be swallowed as search text.
 func (m model) updatePickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	k := m.keys()
 	// '+' always opens the add-harness form, in either focus.
-	if msg.Type == tea.KeyRunes && string(msg.Runes) == "+" {
+	if keyMatches(k.AddHarness, msg) {
 		return m.startAddHarness()
 	}
 	// Navigation, selection and cancel behave the same whether or not the search
 	// box holds focus, so the arrows move the list even while filtering.
-	switch msg.Type {
-	case tea.KeyUp:
+	switch {
+	case keyMatches(k.Up, msg):
 		m.movePick(-1)
 		return m, nil
-	case tea.KeyDown:
+	case keyMatches(k.Down, msg):
 		m.movePick(1)
 		return m, nil
-	case tea.KeyEnter:
+	case keyMatches(k.Confirm, msg):
 		return m.pickHarness()
-	case tea.KeyEsc:
+	case keyMatches(k.Cancel, msg):
 		return m.cancelPick()
-	case tea.KeyTab:
+	case keyMatches(k.ToggleSearch, msg):
 		m.searchFocused = !m.searchFocused
 		if m.searchFocused {
 			return m, m.searchInput.Focus()
@@ -546,13 +549,11 @@ func (m model) updatePickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	// Action row: single-key harness commands.
-	if msg.Type == tea.KeyRunes {
-		switch string(msg.Runes) {
-		case "d":
-			return m.setDefaultHarness()
-		case "m":
-			return m.startModifyHarness()
-		}
+	switch {
+	case keyMatches(k.SetDefault, msg):
+		return m.setDefaultHarness()
+	case keyMatches(k.ModifyHarness, msg):
+		return m.startModifyHarness()
 	}
 	return m, nil
 }
@@ -653,9 +654,10 @@ func (m model) setDefaultHarness() (tea.Model, tea.Cmd) {
 // (nothing is typed), so no Ctrl-chords are needed; the Ctrl variants are kept
 // as aliases.
 func (m model) updateSessionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Esc clears an applied filter — checked before the empty-list guard so it
+	k := m.keys()
+	// Cancel clears an applied filter — checked before the empty-list guard so it
 	// still works when the filter currently hides every row (current() == nil).
-	if msg.Type == tea.KeyEsc && m.filter != "" {
+	if keyMatches(k.Cancel, msg) && m.filter != "" {
 		m.filter = ""
 		m.sessions = filterSessions(m.allSessions, "")
 		return m, nil
@@ -664,31 +666,23 @@ func (m model) updateSessionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if s == nil {
 		return m, nil
 	}
-	switch msg.Type {
-	case tea.KeyEnter, tea.KeyRight:
+	switch {
+	case keyMatches(k.Open, msg):
 		return m, m.openSession(s)
-	case tea.KeyCtrlK:
+	case keyMatches(k.Remove, msg):
 		return m, m.execKillRemove(s)
-	case tea.KeyCtrlR:
+	case keyMatches(k.Resume, msg):
 		return m, m.execInteractive("resume", s.ID)
-	}
-	switch msg.String() {
-	case " ":
+	case keyMatches(k.Preview, msg):
 		return m.togglePreview()
-	case "o":
-		return m, m.openSession(s)
-	case "k":
-		return m, m.execKillRemove(s)
-	case "r":
-		return m, m.execInteractive("resume", s.ID)
-	case "e":
+	case keyMatches(k.Rename, msg):
 		return m.startRename(s)
-	case "/":
+	case keyMatches(k.Filter, msg):
 		m.filtering = true
 		m.filterInput.SetValue(m.filter)
 		m.filterInput.CursorEnd()
 		return m, m.filterInput.Focus()
-	case "q":
+	case keyMatches(k.QuitList, msg):
 		return m, tea.Quit
 	}
 	return m, nil
@@ -698,21 +692,22 @@ func (m model) updateSessionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // live, Enter applies and closes, Esc clears and closes, arrows navigate the
 // filtered list.
 func (m model) updateFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEnter:
+	k := m.keys()
+	switch {
+	case keyMatches(k.Confirm, msg):
 		m.filtering = false
 		m.filterInput.Blur()
 		return m, nil
-	case tea.KeyEsc:
+	case keyMatches(k.Cancel, msg):
 		m.filtering = false
 		m.filter = ""
 		m.filterInput.Blur()
 		m.filterInput.SetValue("")
 		m.sessions = filterSessions(m.allSessions, "")
 		return m, nil
-	case tea.KeyUp:
+	case keyMatches(k.Up, msg):
 		return m.moveUp()
-	case tea.KeyDown:
+	case keyMatches(k.Down, msg):
 		return m.moveDown()
 	}
 	var cmd tea.Cmd
@@ -735,8 +730,9 @@ func (m model) startRename(s *session.Session) (tea.Model, tea.Cmd) {
 
 // updateRenameKey runs while renaming a session (xanax UI label only).
 func (m model) updateRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEnter:
+	k := m.keys()
+	switch {
+	case keyMatches(k.Confirm, msg):
 		title := strings.TrimSpace(m.renameInput.Value())
 		id := m.renameID
 		m.renaming = false
@@ -745,7 +741,7 @@ func (m model) updateRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.execRename(id, title)
-	case tea.KeyEsc:
+	case keyMatches(k.Cancel, msg):
 		m.renaming = false
 		m.renameInput.Blur()
 		return m, nil

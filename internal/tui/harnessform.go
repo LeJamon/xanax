@@ -121,15 +121,16 @@ func (m *model) syncFormWidths() {
 
 // updateFormKey handles keys while the add-harness form is open.
 func (m model) updateFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc:
+	k := m.keys()
+	switch {
+	case keyMatches(k.Cancel, msg):
 		m.addingHarness = false
 		return m, m.composer.Focus()
-	case tea.KeyTab, tea.KeyDown:
+	case keyMatches(k.FormNext, msg):
 		return m.focusFormField(m.formField + 1)
-	case tea.KeyShiftTab, tea.KeyUp:
+	case keyMatches(k.FormPrev, msg):
 		return m.focusFormField(m.formField - 1)
-	case tea.KeyEnter:
+	case keyMatches(k.Confirm, msg):
 		return m.submitHarness()
 	}
 	var cmd tea.Cmd

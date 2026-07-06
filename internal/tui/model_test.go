@@ -939,3 +939,45 @@ func TestSpaceTypesIntoComposer(t *testing.T) {
 		t.Errorf("composer = %q, want %q", m.composer.Value(), "a b")
 	}
 }
+
+// TestRebindingSessionAction proves a config remap changes which key acts: after
+// rebinding remove from 'k' to 'x', 'x' removes the session and 'k' is inert.
+func TestRebindingSessionAction(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sess := &session.Session{ID: "rebind0001", Title: "dead", RepoPath: "/x", Harness: "opencode", Status: session.StatusFailed}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.Store = st
+	m.deps.SocketDir = t.TempDir()
+	m.deps.Cfg.Keys.Remove = config.Binding{"x"} // rebind k -> x
+
+	// The old key no longer acts.
+	if _, cmd := m.Update(key("k")); cmd != nil {
+		t.Fatal("'k' still acted after remove was rebound to 'x'")
+	}
+	// The new key does.
+	_, cmd := m.Update(key("x"))
+	if cmd == nil {
+		t.Fatal("'x' did not act after rebinding remove to it")
+	}
+	cmd()
+	if _, err := st.GetSession("rebind0001"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("rebound remove did not delete the session: %v", err)
+	}
+}
+
+// TestFooterReflectsReboundKeys confirms the hint line is built from the live
+// bindings, so a remapped key shows in the footer instead of a stale default.
+func TestFooterReflectsReboundKeys(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	m.deps.Cfg.Keys.Remove = config.Binding{"x"}
+	if foot := m.footer(); !strings.Contains(foot, "x remove") {
+		t.Errorf("footer did not reflect the rebound remove key: %q", foot)
+	}
+}
