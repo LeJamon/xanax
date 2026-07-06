@@ -424,7 +424,9 @@ func (m model) dispatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.updateSessionKey(msg)
 }
 
-// moveUp/moveDown treat the prompt box as the row just below the last session.
+// moveUp/moveDown treat the prompt box as the row just below the last session
+// and wrap around, so the sessions plus the composer form a single circular
+// ring: top chat → … → last chat → composer → top chat.
 func (m model) moveUp() (tea.Model, tea.Cmd) {
 	if m.onComposer {
 		if len(m.sessions) > 0 {
@@ -434,13 +436,23 @@ func (m model) moveUp() (tea.Model, tea.Cmd) {
 		}
 	} else if m.cursor > 0 {
 		m.cursor--
+	} else {
+		// At the top chat: wrap up to the composer to close the circle.
+		m.onComposer = true
+		return m, m.composer.Focus()
 	}
 	return m, nil
 }
 
 func (m model) moveDown() (tea.Model, tea.Cmd) {
 	if m.onComposer {
-		return m, nil // already the bottom row
+		// At the composer: wrap down to the top chat to close the circle.
+		if len(m.sessions) > 0 {
+			m.onComposer = false
+			m.cursor = 0
+			m.composer.Blur()
+		}
+		return m, nil
 	}
 	var extra tea.Cmd
 	if m.cursor < len(m.sessions)-1 {

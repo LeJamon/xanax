@@ -110,13 +110,23 @@ func TestArrowNavigationBetweenSessionsAndComposer(t *testing.T) {
 		t.Fatalf("up from composer: onComposer=%v cursor=%d, want a session at 2", m.onComposer, m.cursor)
 	}
 	m = send(m, "up")
-	m = send(m, "up") // to index 0
-	m = send(m, "up") // clamp at 0
-	if m.cursor != 0 {
-		t.Errorf("cursor = %d, want clamped to 0", m.cursor)
+	m = send(m, "up") // to the top chat (index 0)
+	if m.onComposer || m.cursor != 0 {
+		t.Fatalf("up to top: onComposer=%v cursor=%d, want the top chat at 0", m.onComposer, m.cursor)
+	}
+	m = send(m, "up") // top chat wraps up to the composer (full circle)
+	if !m.onComposer {
+		t.Fatal("up from the top chat should wrap around to the composer")
+	}
+	m = send(m, "down") // composer wraps down to the top chat (full circle)
+	if m.onComposer || m.cursor != 0 {
+		t.Fatalf("down from the composer: onComposer=%v cursor=%d, want a wrap to the top chat at 0", m.onComposer, m.cursor)
 	}
 	m = send(m, "down")
-	m = send(m, "down") // to last session
+	m = send(m, "down") // to the last session (index 2)
+	if m.onComposer || m.cursor != 2 {
+		t.Fatalf("down to last: onComposer=%v cursor=%d, want the last chat at 2", m.onComposer, m.cursor)
+	}
 	m = send(m, "down") // last session -> composer
 	if !m.onComposer {
 		t.Fatal("down from last session should select the composer")
