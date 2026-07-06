@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"xanax/internal/config"
 	"xanax/internal/session"
 )
 
@@ -127,6 +128,80 @@ func (m model) pickRow(name string, selected bool, w int) string {
 	return left + bar(colMuted, false).Render(strings.Repeat(" ", gap)) + right
 }
 
+// renderSettingsModal draws the keybindings editor as two stacked panels like
+// the harness picker: an "action → keys" results box above a search box. While
+// capturing a new key the results title prompts for it and the lower box shows
+// the abort hint instead of the search input.
+func (m model) renderSettingsModal() string {
+	w := pickerModalWidth(m.width)
+	filtered := m.filteredActions()
+	total := len(m.deps.Cfg.Keys.Actions())
+
+	rows := min(m.visibleRows(), max(1, total))
+	start := m.settingsScroll
+	if start > len(filtered)-rows {
+		start = max(0, len(filtered)-rows)
+	}
+	start = max(0, start)
+	end := min(start+rows, len(filtered))
+
+	var lines []string
+	if len(filtered) == 0 {
+		lines = append(lines, "   "+mutedStyle.Render("no matching action"))
+	} else {
+		for i := start; i < end; i++ {
+			lines = append(lines, m.settingsRow(filtered[i], i == m.settingsIdx, w))
+		}
+	}
+	for len(lines) < rows { // keep the panel height stable while filtering
+		lines = append(lines, "")
+	}
+
+	title := "Keybindings"
+	if m.settingsCapture && m.settingsIdx < len(filtered) {
+		title = "Press keys for " + filtered[m.settingsIdx].Name
+	}
+	results := modalBox(colMuted, w, title, strings.Join(lines, "\n"))
+
+	if m.settingsCapture {
+		left := cursorStyle.Render(" > ")
+		if len(m.settingsPending) == 0 {
+			left += mutedStyle.Render("press keys…")
+		} else {
+			left += whiteText().Render(strings.Join(m.settingsPending, ", "))
+		}
+		hint := mutedStyle.Render("enter save · esc cancel ")
+		return results + "\n" + modalBox(colMuted, w, "Rebind", padRight(left, hint, w))
+	}
+	prompt := cursorStyle.Render(" > ") + m.settingsInput.View()
+	count := mutedStyle.Render(fmt.Sprintf("%d / %d ", len(filtered), total))
+	return results + "\n" + modalBox(colMuted, w, "Settings", padRight(prompt, count, w))
+}
+
+// settingsRow renders one action: its name on the left and its current keys
+// (muted) on the right, with the highlighted row drawn as a full-width bar like
+// the harness picker's selected row. Unbound actions read "unbound".
+func (m model) settingsRow(a config.KeyAction, selected bool, w int) string {
+	keys := strings.Join(a.Keys, ", ")
+	if keys == "" {
+		keys = "unbound"
+	}
+	if !selected {
+		return padRight("   "+a.Name, mutedStyle.Render(keys+" "), w)
+	}
+	bar := func(fg lipgloss.Color, bold bool) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(fg).Background(pickBarBg).Bold(bold)
+	}
+	left := bar(colAccent, true).Render(" ▸ " + a.Name)
+	right := bar(colMuted, false).Render(keys + " ")
+	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 0 {
+		right = ""
+		gap = max(0, w-lipgloss.Width(left))
+	}
+	return left + bar(colMuted, false).Render(strings.Repeat(" ", gap)) + right
+}
+
 func (m model) View() string {
 	if m.width == 0 {
 		return "loading…"
@@ -156,6 +231,8 @@ func (m model) centeredModal() string {
 	switch {
 	case m.picking:
 		return m.renderPickerModal()
+	case m.settingsOn:
+		return m.renderSettingsModal()
 	case m.addingHarness:
 		return m.renderHarnessFormModal()
 	}
@@ -424,28 +501,48 @@ func (m model) renderRename() string {
 }
 
 func (m model) footer() string {
+	k := m.keys()
 	// A pending quit confirmation takes over the footer with a caution prompt.
 	if m.confirmQuit {
-		return warnStyle.Render("Press Ctrl+C again to exit xanax")
+		return warnStyle.Render("Press " + keyHint(k.Quit) + " again to exit xanax")
 	}
+	// Hints are built from the live bindings (keyHint), so remapping a key in the
+	// config updates the footer to match rather than advertising a stale default.
+	updown := keyHint(k.Up) + "/" + keyHint(k.Down)
 	var hint string
 	switch {
 	case m.addingHarness:
-		hint = "tab next · enter save · esc cancel"
+		hint = fmt.Sprintf("%s next · %s save · %s cancel",
+			keyHint(k.FormNext), keyHint(k.Confirm), keyHint(k.Cancel))
 	case m.renaming:
-		hint = "enter save · esc cancel"
+		hint = fmt.Sprintf("%s save · %s cancel", keyHint(k.Confirm), keyHint(k.Cancel))
 	case m.picking:
 		if m.searchFocused {
-			hint = "type to search · ↑/↓ move · enter select · + add · tab for d/m · esc"
+			hint = fmt.Sprintf("type to search · %s move · %s select · %s add · %s for %s/%s · %s",
+				updown, keyHint(k.Confirm), keyHint(k.AddHarness), keyHint(k.ToggleSearch),
+				keyHint(k.SetDefault), keyHint(k.ModifyHarness), keyHint(k.Cancel))
 		} else {
-			hint = "d default · m modify · ↑/↓ move · enter select · + add · tab search · esc"
+			hint = fmt.Sprintf("%s default · %s modify · %s move · %s select · %s add · %s search · %s",
+				keyHint(k.SetDefault), keyHint(k.ModifyHarness), updown, keyHint(k.Confirm),
+				keyHint(k.AddHarness), keyHint(k.ToggleSearch), keyHint(k.Cancel))
 		}
 	case m.filtering:
-		hint = "type to filter · enter apply · esc clear"
+		hint = fmt.Sprintf("type to filter · %s apply · %s clear", keyHint(k.Confirm), keyHint(k.Cancel))
+	case m.settingsOn:
+		if m.settingsCapture {
+			hint = "press keys to add · enter save · esc cancel"
+		} else {
+			hint = fmt.Sprintf("type to search · %s move · %s rebind · %s close",
+				updown, keyHint(k.Confirm), keyHint(k.Cancel))
+		}
 	case m.onComposer:
-		hint = "enter launch · ^o launch+attach · tab harness (+ add) · ↑ sessions · ^c quit"
+		hint = fmt.Sprintf("%s launch · %s launch+attach · %s harness (+ add) · %s sessions · %s quit",
+			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),
+			keyHint(k.Up), keyHint(k.Quit))
 	default:
-		hint = "↑/↓ select · →/enter open · space preview · e rename · r resume · k remove · / filter · ^c quit"
+		hint = fmt.Sprintf("%s select · %s open · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
+			updown, keyHint(k.Open), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
+			keyHint(k.Remove), keyHint(k.Settings), keyHint(k.Filter), keyHint(k.Quit))
 	}
 	out := footerStyle.Render(hint)
 	if m.status != "" {

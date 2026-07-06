@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -226,6 +227,104 @@ func TestDefaultThemePassesValidation(t *testing.T) {
 	path := writeConfig(t, "auto_resume = true\n")
 	if _, err := config.Load(path); err != nil {
 		t.Fatalf("default theme failed validation: %v", err)
+	}
+}
+
+// TestLoadDefaultKeysWhenFileMissing checks the built-in key map is present with
+// no config file, so the dashboard always resolves bindings.
+func TestLoadDefaultKeysWhenFileMissing(t *testing.T) {
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !slices.Equal(cfg.Keys.Remove, config.Binding{"k", "ctrl+k"}) {
+		t.Errorf("default remove keys = %v, want [k ctrl+k]", cfg.Keys.Remove)
+	}
+	if !slices.Equal(cfg.Keys.Quit, config.Binding{"ctrl+c"}) {
+		t.Errorf("default quit keys = %v, want [ctrl+c]", cfg.Keys.Quit)
+	}
+	if !slices.Equal(cfg.Keys.Preview, config.Binding{"space"}) {
+		t.Errorf("default preview keys = %v, want [space]", cfg.Keys.Preview)
+	}
+	if !slices.Equal(cfg.Keys.Settings, config.Binding{"s"}) {
+		t.Errorf("default settings keys = %v, want [s]", cfg.Keys.Settings)
+	}
+}
+
+// TestKeyMapActionsCoverEveryBinding guards that Actions() enumerates the whole
+// KeyMap — validate and the in-TUI editor both rely on it, so a new field that
+// is not added here would silently escape both.
+func TestKeyMapActionsCoverEveryBinding(t *testing.T) {
+	actions := config.DefaultKeys().Actions()
+	names := make(map[string]bool, len(actions))
+	for _, a := range actions {
+		if a.Name == "" || a.Desc == "" {
+			t.Errorf("action has an empty name or description: %+v", a)
+		}
+		names[a.Name] = true
+	}
+	for _, want := range []string{"settings", "remove", "confirm", "cancel", "quit", "form_prev"} {
+		if !names[want] {
+			t.Errorf("Actions() is missing the %q action", want)
+		}
+	}
+}
+
+// TestLoadMergesKeysFieldWise verifies a [keys] table overrides only the actions
+// it names; every other action keeps its built-in binding.
+func TestLoadMergesKeysFieldWise(t *testing.T) {
+	path := writeConfig(t, `
+[keys]
+remove = ["x"]
+filter = ["ctrl+f", "/"]
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !slices.Equal(cfg.Keys.Remove, config.Binding{"x"}) {
+		t.Errorf("remove = %v, want [x] from file", cfg.Keys.Remove)
+	}
+	if !slices.Equal(cfg.Keys.Filter, config.Binding{"ctrl+f", "/"}) {
+		t.Errorf("filter = %v, want [ctrl+f /] from file", cfg.Keys.Filter)
+	}
+	// Unspecified actions keep the defaults.
+	def := config.DefaultKeys()
+	if !slices.Equal(cfg.Keys.Open, def.Open) || !slices.Equal(cfg.Keys.Quit, def.Quit) {
+		t.Errorf("unspecified key actions were not defaulted: %+v", cfg.Keys)
+	}
+}
+
+// TestLoadKeysUnbind confirms an explicit empty array unbinds an action (a
+// non-nil empty binding), distinct from omitting it (which keeps the default).
+func TestLoadKeysUnbind(t *testing.T) {
+	path := writeConfig(t, "[keys]\nquit_list = []\n")
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Keys.QuitList == nil || len(cfg.Keys.QuitList) != 0 {
+		t.Errorf("quit_list = %v, want an empty (unbound) binding", cfg.Keys.QuitList)
+	}
+	// A sibling action left unset still carries its default.
+	if !slices.Equal(cfg.Keys.Filter, config.DefaultKeys().Filter) {
+		t.Errorf("unset action lost its default: filter = %v", cfg.Keys.Filter)
+	}
+}
+
+func TestLoadRejectsUnknownKeyAction(t *testing.T) {
+	path := writeConfig(t, "[keys]\nremvoe = [\"x\"]\n") // typo'd action name
+	_, err := config.Load(path)
+	if err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Fatalf("want unknown-key error for a bogus [keys] action, got %v", err)
+	}
+}
+
+func TestLoadRejectsEmptyKeyBinding(t *testing.T) {
+	path := writeConfig(t, "[keys]\nremove = [\"\"]\n")
+	_, err := config.Load(path)
+	if err == nil || !strings.Contains(err.Error(), "keys remove") {
+		t.Fatalf("want empty-key-binding error, got %v", err)
 	}
 }
 

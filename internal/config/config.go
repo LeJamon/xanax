@@ -57,6 +57,7 @@ type Config struct {
 	AutoResume      bool               `toml:"auto_resume"`
 	Notifications   bool               `toml:"notifications"`
 	Theme           Theme              `toml:"theme"`
+	Keys            KeyMap             `toml:"keys"`
 	Harnesses       map[string]Harness `toml:"harness"`
 }
 
@@ -88,6 +89,61 @@ type Theme struct {
 	Text      string `toml:"text"`      // prompt input text
 	Branch    string `toml:"branch"`    // git branch
 	PR        string `toml:"pr"`        // PR number
+}
+
+// Binding is the set of keys that trigger one dashboard action. Each entry is a
+// key name as bubbletea reports it (tea.KeyMsg.String()): a rune ("o", "/",
+// "+"), a named key ("enter", "up", "tab", "shift+tab"), a control chord
+// ("ctrl+c", "ctrl+o"), or "space" for the spacebar. Any key in the list fires
+// the action; an empty list leaves it unbound.
+type Binding []string
+
+// KeyAction pairs a bindable action's config name and one-line description with
+// its current keys. KeyMap.Actions returns them in a stable order for the in-TUI
+// keybindings editor and for validation.
+type KeyAction struct {
+	Name string
+	Desc string
+	Keys Binding
+}
+
+// KeyMap binds the dashboard's actions to keys (SPEC.md §8/§10). Every key the
+// dashboard handles resolves through it, so the config file can remap which key
+// does what. The actions shared across every modal editor — Confirm (the primary
+// action) and Cancel (back / dismiss) — are bound once here and reused, so a
+// remap applies consistently. The interact-mode detach key is separate
+// (interact_exit_key): it lives in the raw passthrough, not the dashboard.
+type KeyMap struct {
+	// Navigation and global — active in every mode.
+	Up      Binding `toml:"up"`      // move the selection up
+	Down    Binding `toml:"down"`    // move the selection down
+	Confirm Binding `toml:"confirm"` // enter: launch / open / apply / save / select
+	Cancel  Binding `toml:"cancel"`  // esc: back / cancel / clear an applied filter
+	Quit    Binding `toml:"quit"`    // two-step confirm-then-exit, from any mode
+
+	// Session list — active while a session row is selected.
+	Open     Binding `toml:"open"`      // open the live session window
+	Remove   Binding `toml:"remove"`    // kill (if live) then delete from the list
+	Resume   Binding `toml:"resume"`    // resume the session
+	Rename   Binding `toml:"rename"`    // rename its xanax label
+	Preview  Binding `toml:"preview"`   // toggle the screen peek
+	Filter   Binding `toml:"filter"`    // open the filter bar
+	Settings Binding `toml:"settings"`  // open the in-TUI keybindings editor
+	QuitList Binding `toml:"quit_list"` // quit straight from the list
+
+	// Prompt box (composer).
+	LaunchAttach  Binding `toml:"launch_attach"`  // launch a session and attach to it
+	HarnessPicker Binding `toml:"harness_picker"` // open the harness picker
+
+	// Harness picker.
+	AddHarness    Binding `toml:"add_harness"`    // open the add-harness form
+	SetDefault    Binding `toml:"set_default"`    // set the highlighted harness as default
+	ModifyHarness Binding `toml:"modify_harness"` // edit the highlighted harness
+	ToggleSearch  Binding `toml:"toggle_search"`  // toggle search box / action row focus
+
+	// Harness add/modify form.
+	FormNext Binding `toml:"form_next"` // next field
+	FormPrev Binding `toml:"form_prev"` // previous field
 }
 
 // Paths locates everything xanax reads or writes on disk (SPEC.md §7).
@@ -133,6 +189,7 @@ func Default() *Config {
 		AutoResume:      true,
 		Notifications:   true,
 		Theme:           DefaultTheme(),
+		Keys:            DefaultKeys(),
 		Harnesses: map[string]Harness{
 			"opencode": {Adapter: AdapterOpencode, Command: "opencode"},
 			"pi":       {Adapter: AdapterPi, Command: "pi"},
@@ -153,6 +210,103 @@ func DefaultTheme() Theme {
 		Text:      "15",  // white
 		Branch:    "6",   // cyan
 		PR:        "10",  // green
+	}
+}
+
+// DefaultKeys is the built-in key map: the bindings the dashboard shipped with
+// before keys were configurable. A config file's [keys] table overlays it
+// field-wise (mergeKeys), so an override changes only the actions it names.
+func DefaultKeys() KeyMap {
+	return KeyMap{
+		Up:      Binding{"up"},
+		Down:    Binding{"down"},
+		Confirm: Binding{"enter"},
+		Cancel:  Binding{"esc"},
+		Quit:    Binding{"ctrl+c"},
+
+		Open:     Binding{"enter", "right", "o"},
+		Remove:   Binding{"k", "ctrl+k"},
+		Resume:   Binding{"r", "ctrl+r"},
+		Rename:   Binding{"e"},
+		Preview:  Binding{"space"},
+		Filter:   Binding{"/"},
+		Settings: Binding{"s"},
+		QuitList: Binding{"q"},
+
+		LaunchAttach:  Binding{"ctrl+o", "alt+enter"},
+		HarnessPicker: Binding{"tab"},
+
+		AddHarness:    Binding{"+"},
+		SetDefault:    Binding{"d"},
+		ModifyHarness: Binding{"m"},
+		ToggleSearch:  Binding{"tab"},
+
+		FormNext: Binding{"tab", "down"},
+		FormPrev: Binding{"shift+tab", "up"},
+	}
+}
+
+// Actions lists every bindable action with its current keys, in the stable
+// order the in-TUI keybindings editor displays them. Adding a KeyMap field means
+// adding it here too — validate and the editor both enumerate through this.
+func (k KeyMap) Actions() []KeyAction {
+	return []KeyAction{
+		{"up", "move the selection up", k.Up},
+		{"down", "move the selection down", k.Down},
+		{"confirm", "primary action: launch / open / apply / save / select", k.Confirm},
+		{"cancel", "back, cancel, or clear an applied filter", k.Cancel},
+		{"quit", "confirm-then-exit, from any mode", k.Quit},
+		{"open", "open the selected session's window", k.Open},
+		{"remove", "kill (if live) then remove the session", k.Remove},
+		{"resume", "resume the selected session", k.Resume},
+		{"rename", "rename the session's xanax label", k.Rename},
+		{"preview", "toggle the screen peek", k.Preview},
+		{"filter", "filter the session list", k.Filter},
+		{"settings", "open this keybindings editor", k.Settings},
+		{"quit_list", "quit straight from the session list", k.QuitList},
+		{"launch_attach", "launch a new session and attach to it", k.LaunchAttach},
+		{"harness_picker", "open the harness picker", k.HarnessPicker},
+		{"add_harness", "open the add-harness form", k.AddHarness},
+		{"set_default", "set the highlighted harness as default", k.SetDefault},
+		{"modify_harness", "edit the highlighted harness", k.ModifyHarness},
+		{"toggle_search", "toggle the picker's search / action row", k.ToggleSearch},
+		{"form_next", "next form field", k.FormNext},
+		{"form_prev", "previous form field", k.FormPrev},
+	}
+}
+
+// mergeKeys overlays the bindings over provides onto base. A nil binding means
+// the file did not set that action (keep the default); a present binding —
+// including an empty list, which unbinds the action — replaces it wholesale.
+func mergeKeys(base, over KeyMap) KeyMap {
+	pick := func(b, o Binding) Binding {
+		if o != nil {
+			return o
+		}
+		return b
+	}
+	return KeyMap{
+		Up:            pick(base.Up, over.Up),
+		Down:          pick(base.Down, over.Down),
+		Confirm:       pick(base.Confirm, over.Confirm),
+		Cancel:        pick(base.Cancel, over.Cancel),
+		Quit:          pick(base.Quit, over.Quit),
+		Open:          pick(base.Open, over.Open),
+		Remove:        pick(base.Remove, over.Remove),
+		Resume:        pick(base.Resume, over.Resume),
+		Rename:        pick(base.Rename, over.Rename),
+		Preview:       pick(base.Preview, over.Preview),
+		Filter:        pick(base.Filter, over.Filter),
+		Settings:      pick(base.Settings, over.Settings),
+		QuitList:      pick(base.QuitList, over.QuitList),
+		LaunchAttach:  pick(base.LaunchAttach, over.LaunchAttach),
+		HarnessPicker: pick(base.HarnessPicker, over.HarnessPicker),
+		AddHarness:    pick(base.AddHarness, over.AddHarness),
+		SetDefault:    pick(base.SetDefault, over.SetDefault),
+		ModifyHarness: pick(base.ModifyHarness, over.ModifyHarness),
+		ToggleSearch:  pick(base.ToggleSearch, over.ToggleSearch),
+		FormNext:      pick(base.FormNext, over.FormNext),
+		FormPrev:      pick(base.FormPrev, over.FormPrev),
 	}
 }
 
@@ -186,6 +340,7 @@ type fileConfig struct {
 	AutoResume      *bool              `toml:"auto_resume"`
 	Notifications   *bool              `toml:"notifications"`
 	Theme           Theme              `toml:"theme"`
+	Keys            KeyMap             `toml:"keys"`
 	Harness         map[string]Harness `toml:"harness"`
 }
 
@@ -225,6 +380,7 @@ func Load(path string) (*Config, error) {
 		cfg.Notifications = *fc.Notifications
 	}
 	cfg.Theme = mergeTheme(cfg.Theme, fc.Theme)
+	cfg.Keys = mergeKeys(cfg.Keys, fc.Keys)
 	for name, fh := range fc.Harness {
 		merged := cfg.Harnesses[name]
 		if fh.Adapter != "" {
@@ -289,6 +445,25 @@ func (c *Config) validate() error {
 	}
 	if err := c.Theme.validate(); err != nil {
 		return err
+	}
+	if err := c.Keys.validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validate rejects a key binding that contains an empty (or whitespace-only)
+// key — almost always a typo (e.g. a stray comma). Load merges defaults in
+// first, so an omitted action is never empty here; only an explicit bad entry
+// trips this. Unknown key *names* (e.g. "supr" for a nonexistent key) cannot be
+// validated exhaustively — they simply never fire.
+func (k KeyMap) validate() error {
+	for _, a := range k.Actions() {
+		for _, key := range a.Keys {
+			if strings.TrimSpace(key) == "" {
+				return fmt.Errorf("keys %s: contains an empty key binding", a.Name)
+			}
+		}
 	}
 	return nil
 }

@@ -344,6 +344,23 @@ accent = "13"
 muted  = "250"
 branch = "6"
 
+# Dashboard key bindings (§10). Each action takes a list of keys; any of them
+# fires it, and an omitted action keeps its default. Keys use bubbletea names —
+# a rune ("o", "/", "+"), a named key ("enter", "up", "tab", "shift+tab"), a
+# control chord ("ctrl+c", "ctrl+o"), or "space". An empty list unbinds an
+# action. `xanax config` prints the full resolved set. `confirm`/`cancel` are the
+# shared primary/back keys reused across the composer, picker, filter, rename and
+# harness form; the interact-mode detach key is separate (interact_exit_key).
+# Precedence: `quit` is matched before every mode, and `up`/`down` before the
+# session list and composer, so if you bind one of them to a key a context action
+# also uses (e.g. up = ["up", "k"] while remove keeps "k"), the global one wins.
+[keys]
+remove = ["k", "ctrl+k"]         # override just the actions you want to remap
+filter = ["ctrl+f", "/"]
+# up, down, confirm, cancel, quit, open, resume, rename, preview, quit_list,
+# launch_attach, harness_picker, add_harness, set_default, modify_harness,
+# toggle_search, form_next, form_prev — all remappable the same way.
+
 [harness.opencode]
 adapter = "opencode"             # native adapter
 command = "opencode"             # override for custom install paths
@@ -418,10 +435,26 @@ box shows the same rules in grey when it is not the selected row.
 - **A session selected:** you are not typing, so plain letters act on it — `→`/`Enter`
   open the live window, `k` remove (terminate if live, then delete from the list),
   `r` resume, `e` **rename** (a xanax-only UI label; never touches the harness's own
-  session), `↓` returns to the prompt box. `Ctrl+K`/`Ctrl+R` are aliases for terminals
-  that deliver them; `Ctrl+C` always quits.
+  session), `s` **settings** (open the keybindings editor, below), `↓` returns to the
+  prompt box. `Ctrl+K`/`Ctrl+R` are aliases for terminals that deliver them; `Ctrl+C`
+  always quits.
 - **Rename** opens an inline single-line editor pre-filled with the current title;
   Enter saves to the `sessions.title` column, Esc cancels.
+- Every dashboard key above is a default, not a hard-coded binding: the `[keys]`
+  table in the config (§8) remaps any of them, and the footer hints follow suit.
+  Only the interact-mode detach key lives elsewhere (`interact_exit_key`), since
+  it is read inside the raw passthrough rather than the dashboard. `quit` is
+  resolved before any mode and `up`/`down` before the session list and composer,
+  so a key bound to one of those wins over a context action bound to the same key.
+- **Keybindings editor** (`s`): a centered, searchable modal — the same style as
+  the harness picker — listing every action with its current keys. `↑`/`↓` move and
+  Enter starts a capture for the highlighted action; then press one or more keys
+  (each added once) and Enter again to save them — so you can bind aliases like `k`
+  and `ctrl+k` together — or Esc to cancel. The binding is written to the `[keys]`
+  table and takes effect immediately; Esc in the list closes the editor. It edits
+  the same file `[keys]` documents, so changes made here and by hand are one and the
+  same. Enter, Esc and the quit key drive the capture itself, so binding an action
+  to one of those is a config-file edit.
 - Live updates: the list reloads from SQLite once per second (supervisors are the
   writers). The startup reconciliation pass auto-resumes interrupted sessions (§6)
   before the first render.
