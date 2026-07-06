@@ -180,8 +180,9 @@ func DefaultPaths() (Paths, error) {
 	}, nil
 }
 
-// Default returns the built-in configuration: opencode and pi with their
-// native adapters, no config file required.
+// Default returns the built-in harness configuration. opencode and pi use
+// native adapters; codex uses the generic adapter with command-line prompt
+// delivery because typing into its full-screen TUI races startup.
 func Default() *Config {
 	return &Config{
 		DefaultHarness:  "opencode",
@@ -193,6 +194,13 @@ func Default() *Config {
 		Harnesses: map[string]Harness{
 			"opencode": {Adapter: AdapterOpencode, Command: "opencode"},
 			"pi":       {Adapter: AdapterPi, Command: "pi"},
+			"codex": {
+				Adapter:          AdapterGeneric,
+				Command:          "codex",
+				ResumeArgs:       []string{"resume", "--last"},
+				PromptPositional: true,
+				IdleTimeout:      120,
+			},
 		},
 	}
 }

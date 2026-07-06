@@ -1,9 +1,10 @@
 # xanax
 
 A terminal-first session manager for autonomous AI coding agents — `tmux + htop`
-for harnesses like **opencode** and **pi**. xanax launches agents, supervises them
-so they keep running after you close the UI, and gives you one dashboard to attach,
-monitor, and manage them regardless of which harness is doing the work.
+for harnesses like **opencode**, **pi**, and **codex**. xanax launches agents,
+supervises them so they keep running after you close the UI, and gives you one
+dashboard to attach, monitor, and manage them regardless of which harness is
+doing the work.
 
 xanax is **not** an agent framework: no planning, prompting, memory, or tools. That
 stays the harness's job. See [`SPEC.md`](SPEC.md) for the full v1 design.
@@ -70,7 +71,8 @@ Code's background agents).
 
 ## Configuration
 
-Optional, at `~/.config/xanax/config.toml`. opencode and pi work with no config.
+Optional, at `~/.config/xanax/config.toml`. opencode, pi, and codex work with no
+config.
 
 ```toml
 default_harness   = "opencode"
@@ -85,6 +87,15 @@ command = "opencode"
 [harness.pi]
 adapter = "pi"
 command = "pi"
+
+# codex is built in as a generic full-screen TUI harness. If you override it,
+# omitted fields keep these defaults.
+[harness.codex]
+adapter           = "generic"
+command           = "codex"
+prompt_positional = true                  # codex "<prompt>" starts a session with it
+resume_args       = ["resume", "--last"]  # reattach to the most recent session
+idle_timeout      = 120                   # no native state; mark "waiting" when idle
 
 # Optional TUI colors — ANSI palette index ("0"–"255") or hex ("#rgb"/"#rrggbb").
 # Any omitted field keeps its default; see `xanax config` for the full set.
@@ -102,14 +113,6 @@ resume_args = ["session", "--resume"]    # resume the most recent session
 # A CLI that takes the prompt as a flag can set prompt_arg = "--flag"
 # (or prompt_positional = true) to skip typing it into the PTY.
 
-# codex: a full-screen TUI. It takes the prompt positionally and resumes
-# natively, so xanax never types into its input (which would race startup).
-[harness.codex]
-adapter           = "generic"
-command           = "codex"
-prompt_positional = true                  # codex "<prompt>" starts a session with it
-resume_args       = ["resume", "--last"]  # reattach to the most recent session
-idle_timeout      = 120                   # no native state; mark "waiting" when idle
 ```
 
 ## Layout

@@ -8,7 +8,8 @@ It is a control plane over existing harnesses (tmux + htop for AI agents).
 
 - Language: **Go** (pure-Go dependencies preferred, single static binary)
 - Platforms: macOS (arm64/x86_64), Linux (glibc)
-- v1 harnesses: **opencode** and **pi** (architecture stays harness-generic)
+- v1 harnesses: **opencode**, **pi**, and **codex** (architecture stays
+  harness-generic; codex uses the generic adapter)
 
 ---
 
@@ -369,6 +370,15 @@ command = "opencode"             # override for custom install paths
 adapter = "pi"
 command = "pi"
 
+# codex is a built-in generic full-screen TUI harness. If a config overrides it,
+# omitted fields keep these defaults.
+[harness.codex]
+adapter           = "generic"
+command           = "codex"
+prompt_positional = true                  # codex "<prompt>" starts a session with it
+resume_args       = ["resume", "--last"]  # reattach to the most recent session
+idle_timeout      = 120                   # no native state; mark "waiting" when idle
+
 # Any additional harness works immediately with basic states:
 [harness.goose]
 adapter     = "generic"
@@ -378,17 +388,9 @@ resume_args = ["session", "--resume"]    # resume the most recent session
 # A CLI that accepts the prompt as a flag can add prompt_arg = "--flag"
 # (or prompt_positional = true) to deliver it on the command line instead.
 
-# codex is a full-screen TUI: deliver the prompt positionally and resume
-# natively so xanax never types into its input (which would race startup).
-[harness.codex]
-adapter           = "generic"
-command           = "codex"
-prompt_positional = true                  # codex "<prompt>" starts a session with it
-resume_args       = ["resume", "--last"]  # reattach to the most recent session
-idle_timeout      = 120                   # no native state; mark "waiting" when idle
 ```
 
-Defaults for opencode and pi are built in; the file is optional.
+Defaults for opencode, pi, and codex are built in; the file is optional.
 
 ## 9. CLI
 

@@ -40,6 +40,19 @@ func TestLoadDefaultsWhenFileMissing(t *testing.T) {
 	if got := cfg.Harnesses["pi"].Adapter; got != config.AdapterPi {
 		t.Errorf("pi adapter = %q, want %q", got, config.AdapterPi)
 	}
+	codex := cfg.Harnesses["codex"]
+	if codex.Adapter != config.AdapterGeneric || codex.Command != "codex" {
+		t.Errorf("codex default = %+v, want generic codex", codex)
+	}
+	if !codex.PromptPositional {
+		t.Error("codex default prompt_positional = false, want true")
+	}
+	if !slices.Equal(codex.ResumeArgs, []string{"resume", "--last"}) {
+		t.Errorf("codex default resume_args = %v, want [resume --last]", codex.ResumeArgs)
+	}
+	if codex.IdleTimeout != 120 {
+		t.Errorf("codex default idle_timeout = %d, want 120", codex.IdleTimeout)
+	}
 }
 
 func TestLoadMergesFileOverDefaults(t *testing.T) {
@@ -86,6 +99,35 @@ resume_args = ["session", "--resume"]
 	}
 	if len(goose.ResumeArgs) != 2 {
 		t.Errorf("goose resume_args = %v", goose.ResumeArgs)
+	}
+}
+
+func TestLoadMergesPartialCodexConfigOverDefault(t *testing.T) {
+	path := writeConfig(t, `
+default_harness = "codex"
+
+[harness.codex]
+adapter = "generic"
+command = "codex"
+args = ["-a", "never", "-s", "workspace-write"]
+idle_timeout = 120
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	codex := cfg.Harnesses["codex"]
+	if cfg.DefaultHarness != "codex" {
+		t.Errorf("DefaultHarness = %q, want codex", cfg.DefaultHarness)
+	}
+	if !slices.Equal(codex.Args, []string{"-a", "never", "-s", "workspace-write"}) {
+		t.Errorf("codex args = %v, want local override", codex.Args)
+	}
+	if !codex.PromptPositional {
+		t.Error("partial codex override dropped prompt_positional")
+	}
+	if !slices.Equal(codex.ResumeArgs, []string{"resume", "--last"}) {
+		t.Errorf("partial codex override dropped resume_args: %v", codex.ResumeArgs)
 	}
 }
 

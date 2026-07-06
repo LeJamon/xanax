@@ -238,10 +238,10 @@ func TestRenameEscCancels(t *testing.T) {
 }
 
 func TestHarnessNamesDefaultFirst(t *testing.T) {
-	cfg := config.Default() // default_harness = opencode, plus pi
+	cfg := config.Default() // default_harness = opencode, rest alphabetical
 	names := harnessNames(cfg)
-	if len(names) != 2 || names[0] != "opencode" || names[1] != "pi" {
-		t.Errorf("harnessNames = %v, want [opencode pi]", names)
+	if !slices.Equal(names, []string{"opencode", "codex", "pi"}) {
+		t.Errorf("harnessNames = %v, want [opencode codex pi]", names)
 	}
 }
 
@@ -251,17 +251,17 @@ func TestTabOpensPickerAndSelectsHarness(t *testing.T) {
 	if !m.picking {
 		t.Fatal("tab did not open the harness picker")
 	}
-	m = send(m, "down") // opencode -> pi
+	m = send(m, "down") // opencode -> codex
 	m = send(m, "enter")
 	if m.picking {
 		t.Fatal("enter did not close the picker")
 	}
-	if m.harness() != "pi" {
-		t.Errorf("harness = %q, want pi after picking", m.harness())
+	if m.harness() != "codex" {
+		t.Errorf("harness = %q, want codex after picking", m.harness())
 	}
 	// The choice drives the launch args.
 	args := newSessionArgs(m.harness(), "", "do things", false)
-	want := []string{"new", "--harness", "pi", "--no-attach", "--", "do things"}
+	want := []string{"new", "--harness", "codex", "--no-attach", "--", "do things"}
 	if !slices.Equal(args, want) {
 		t.Fatalf("args = %v, want %v", args, want)
 	}
@@ -383,13 +383,15 @@ func TestPickerArrowsDoNotMoveSessionSelection(t *testing.T) {
 // TestPickerSearchFiltering confirms that typing letters filters the harness
 // list, and the current pickIdx is clamped to the filtered results.
 func TestPickerSearchFiltering(t *testing.T) {
-	m := newTestModel(nil) // built-in: opencode, pi (opencode is default)
+	m := newTestModel(nil) // built-ins: opencode, codex, pi (opencode is default)
 	m = send(m, "tab")
 	if !m.picking {
 		t.Fatal("picker not open")
 	}
-	// Typing 'o' should focus the search bar and filter.
-	m = send(m, "o")
+	// Typing "open" should focus the search bar and filter to opencode.
+	for _, r := range "open" {
+		m = send(m, string(r))
+	}
 	if !m.searchFocused {
 		t.Fatal("search should be focused after typing")
 	}
@@ -444,18 +446,18 @@ func TestPickerOpensSearchable(t *testing.T) {
 // TestPickerArrowsNavigateWhileSearching confirms ↑/↓ move the highlight even
 // while the search box is focused, so a non-top match can be selected.
 func TestPickerArrowsNavigateWhileSearching(t *testing.T) {
-	m := newTestModel(nil) // opencode (default), pi
+	m := newTestModel(nil) // opencode (default), codex, pi
 	m = send(m, "tab")
 	if !m.searchFocused {
 		t.Fatal("picker should open with the search box focused")
 	}
-	m = send(m, "down") // navigate to pi while still in the search box
+	m = send(m, "down") // navigate to codex while still in the search box
 	if m.pickIdx != 1 {
 		t.Fatalf("pickIdx = %d, want 1 (arrows must navigate while searching)", m.pickIdx)
 	}
 	m = send(m, "enter")
-	if m.harness() != "pi" {
-		t.Errorf("selected harness = %q, want pi", m.harness())
+	if m.harness() != "codex" {
+		t.Errorf("selected harness = %q, want codex", m.harness())
 	}
 }
 
@@ -471,11 +473,11 @@ func TestPickerDefaultKey(t *testing.T) {
 
 	m = send(m, "tab")  // open picker (search focused), pickIdx = 0 (opencode)
 	m = send(m, "tab")  // switch to the action row so 'd' is a command
-	m = send(m, "down") // move to pi (pickIdx = 1)
+	m = send(m, "down") // move to codex (pickIdx = 1)
 	if m.pickIdx != 1 {
 		t.Errorf("pickIdx = %d, want 1", m.pickIdx)
 	}
-	// Press 'd' to set pi as default.
+	// Press 'd' to set codex as default.
 	m = send(m, "d")
 	if m.picking {
 		t.Fatal("'d' did not close picker")
@@ -484,8 +486,8 @@ func TestPickerDefaultKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload config: %v", err)
 	}
-	if cfg.DefaultHarness != "pi" {
-		t.Errorf("default_harness = %q, want pi", cfg.DefaultHarness)
+	if cfg.DefaultHarness != "codex" {
+		t.Errorf("default_harness = %q, want codex", cfg.DefaultHarness)
 	}
 }
 
