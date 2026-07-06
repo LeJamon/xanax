@@ -436,7 +436,7 @@ func (m model) moveUp() (tea.Model, tea.Cmd) {
 		}
 	} else if m.cursor > 0 {
 		m.cursor--
-	} else {
+	} else if len(m.sessions) > 0 {
 		// At the top chat: wrap up to the composer to close the circle.
 		m.onComposer = true
 		return m, m.composer.Focus()
@@ -457,7 +457,7 @@ func (m model) moveDown() (tea.Model, tea.Cmd) {
 	var extra tea.Cmd
 	if m.cursor < len(m.sessions)-1 {
 		m.cursor++
-	} else {
+	} else if len(m.sessions) > 0 {
 		m.onComposer = true
 		extra = m.composer.Focus()
 	}

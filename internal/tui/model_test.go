@@ -772,6 +772,29 @@ func TestEscClearsFilterWhenAllHidden(t *testing.T) {
 	}
 }
 
+func TestEmptyFilteredListArrowsKeepEscAvailable(t *testing.T) {
+	for _, key := range []string{"up", "down"} {
+		t.Run(key, func(t *testing.T) {
+			m := selectSession(newTestModel(sampleSessions()), 0)
+			m.filter = "zzz" // applied filter that matches nothing
+			m.sessions = filterSessions(m.allSessions, m.filter)
+			if len(m.sessions) != 0 {
+				t.Fatalf("expected 0 matches, got %d", len(m.sessions))
+			}
+
+			m = send(m, key)
+			if m.onComposer {
+				t.Fatalf("%s moved focus to the composer on an empty filtered list", key)
+			}
+
+			m = send(m, "esc")
+			if m.filter != "" || len(m.sessions) != 3 {
+				t.Errorf("esc after %s did not clear filter: filter=%q n=%d", key, m.filter, len(m.sessions))
+			}
+		})
+	}
+}
+
 func TestViewRendersWithoutPanic(t *testing.T) {
 	m := newTestModel(sampleSessions())
 	out := m.View()
