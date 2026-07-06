@@ -19,6 +19,262 @@ func formModel(t *testing.T) (model, string) {
 	return m, path
 }
 
+// configModel writes toml to a temp config, loads it, and returns a model whose
+// deps reflect that config — the starting point for exercising the picker and
+// the modify flow against a real file.
+func configModel(t *testing.T, toml string) (model, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(toml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	m := newTestModel(nil)
+	m.deps.Cfg = cfg
+	m.deps.ConfigPath = path
+	m.harnesses = harnessNames(cfg)
+	return m, path
+}
+
+// openModify simulates highlighting name in the picker and pressing 'm'.
+func openModify(t *testing.T, m model, name string) model {
+	t.Helper()
+	m.picking = true
+	idx := slices.Index(m.filteredHarnesses(), name)
+	if idx < 0 {
+		t.Fatalf("harness %q not in picker list %v", name, m.filteredHarnesses())
+	}
+	m.pickIdx = idx
+	next, _ := m.startModifyHarness()
+	return next.(model)
+}
+
+// TestPickerMKeyOpensModify confirms 'm' on the action row opens the form in
+// modify mode, targeting the highlighted harness.
+func TestPickerMKeyOpensModify(t *testing.T) {
+	m := newTestModel(nil) // built-ins: opencode (default, highlighted), pi
+	m = send(m, "tab")     // open picker (search focused)
+	m = send(m, "tab")     // switch to the action row so 'm' is a command
+	m = send(m, "m")
+	if !m.addingHarness || m.editHarness != "opencode" {
+		t.Fatalf("m did not open modify for opencode: adding=%v edit=%q", m.addingHarness, m.editHarness)
+	}
+	if got := m.formInputs[fieldName].Value(); got != "opencode" {
+		t.Errorf("name field = %q, want opencode", got)
+	}
+}
+
+// TestModifyPreFillsForm confirms the form is seeded from the harness, with
+// command and args rejoined into the single command field.
+func TestModifyPreFillsForm(t *testing.T) {
+	m, _ := configModel(t, `default_harness = "opencode"
+
+[harness.goose]
+adapter = "generic"
+command = "goose"
+args = ["run"]
+prompt_arg = "--message"
+idle_timeout = 90
+waiting_pattern = "\\(y/n\\)"
+`)
+	m = openModify(t, m, "goose")
+	want := map[int]string{
+		fieldName:           "goose",
+		fieldCommand:        "goose run",
+		fieldPromptArg:      "--message",
+		fieldIdleTimeout:    "90",
+		fieldWaitingPattern: `\(y/n\)`,
+	}
+	for field, exp := range want {
+		if got := m.formInputs[field].Value(); got != exp {
+			t.Errorf("field %d = %q, want %q", field, got, exp)
+		}
+	}
+}
+
+// TestModifyRewritesBlockInPlace confirms editing a harness rewrites its block
+// (not duplicating it) and reloads with the new values.
+func TestModifyRewritesBlockInPlace(t *testing.T) {
+	m, path := configModel(t, `default_harness = "opencode"
+
+[harness.goose]
+adapter = "generic"
+command = "goose"
+prompt_arg = "--old"
+`)
+	m = openModify(t, m, "goose")
+	m.formInputs[fieldCommand].SetValue("goose session")
+	m.formInputs[fieldPromptArg].SetValue("--new")
+
+	next, _ := m.submitHarness()
+	m = next.(model)
+	if m.addingHarness || m.formErr != "" {
+		t.Fatalf("submit failed: adding=%v err=%q", m.addingHarness, m.formErr)
+	}
+	data, _ := os.ReadFile(path)
+	if n := strings.Count(string(data), "[harness.goose]"); n != 1 {
+		t.Fatalf("expected one goose block, found %d:\n%s", n, data)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	h := cfg.Harnesses["goose"]
+	if h.Adapter != "generic" || h.Command != "goose" || !slices.Equal(h.Args, []string{"session"}) || h.PromptArg != "--new" {
+		t.Errorf("modified harness wrong: %+v", h)
+	}
+}
+
+// TestModifyPreservesAdapterAndHiddenFields confirms modify keeps the adapter
+// and the fields the form does not expose (env, resume_args, prompt_positional).
+func TestModifyPreservesAdapterAndHiddenFields(t *testing.T) {
+	m, path := configModel(t, `default_harness = "opencode"
+
+[harness.custom]
+adapter = "pi"
+command = "pi"
+resume_args = ["--resume"]
+prompt_positional = true
+env = {"FOO" = "bar"}
+`)
+	m = openModify(t, m, "custom")
+	m.formInputs[fieldCommand].SetValue("pi-beta") // change only the command
+
+	next, _ := m.submitHarness()
+	m = next.(model)
+	if m.formErr != "" {
+		t.Fatalf("submit failed: %q", m.formErr)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	h := cfg.Harnesses["custom"]
+	if h.Adapter != "pi" || h.Command != "pi-beta" {
+		t.Errorf("adapter/command wrong: adapter=%q command=%q", h.Adapter, h.Command)
+	}
+	if !slices.Equal(h.ResumeArgs, []string{"--resume"}) || !h.PromptPositional || h.Env["FOO"] != "bar" {
+		t.Errorf("hidden fields not preserved: %+v", h)
+	}
+}
+
+// TestModifyPreservesArgsWithSpaces confirms a save that leaves the command
+// field untouched keeps an arg that contains a space, instead of re-splitting
+// it on whitespace.
+func TestModifyPreservesArgsWithSpaces(t *testing.T) {
+	m, path := configModel(t, `default_harness = "opencode"
+
+[harness.goose]
+adapter = "generic"
+command = "goose"
+args = ["--message", "hello world"]
+`)
+	m = openModify(t, m, "goose")
+	// Save without touching the command field; edit only an unrelated field.
+	m.formInputs[fieldPromptArg].SetValue("--msg")
+
+	next, _ := m.submitHarness()
+	m = next.(model)
+	if m.formErr != "" {
+		t.Fatalf("submit failed: %q", m.formErr)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	h := cfg.Harnesses["goose"]
+	if !slices.Equal(h.Args, []string{"--message", "hello world"}) {
+		t.Errorf("args = %v, want [--message, \"hello world\"]", h.Args)
+	}
+	if h.PromptArg != "--msg" {
+		t.Errorf("prompt_arg = %q, want --msg", h.PromptArg)
+	}
+}
+
+// TestModifyBuiltinAppendsOverride confirms modifying a built-in harness that has
+// no block in the file appends an override (rather than erroring), keeping the
+// adapter.
+func TestModifyBuiltinAppendsOverride(t *testing.T) {
+	m, path := configModel(t, "default_harness = \"opencode\"\n") // opencode/pi come from defaults
+	m = openModify(t, m, "pi")
+	m.formInputs[fieldCommand].SetValue("pi-custom")
+
+	next, _ := m.submitHarness()
+	m = next.(model)
+	if m.formErr != "" {
+		t.Fatalf("submit failed: %q", m.formErr)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if h := cfg.Harnesses["pi"]; h.Adapter != "pi" || h.Command != "pi-custom" {
+		t.Errorf("built-in override wrong: %+v", h)
+	}
+}
+
+// TestModifyRenameFollowsDefault confirms renaming the default harness updates
+// default_harness so the reloaded config stays valid.
+func TestModifyRenameFollowsDefault(t *testing.T) {
+	m, path := configModel(t, `default_harness = "goose"
+
+[harness.goose]
+adapter = "generic"
+command = "goose"
+`)
+	m = openModify(t, m, "goose")
+	m.formInputs[fieldName].SetValue("goose2")
+
+	next, _ := m.submitHarness()
+	m = next.(model)
+	if m.formErr != "" {
+		t.Fatalf("submit failed: %q", m.formErr)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload after rename: %v", err)
+	}
+	if cfg.DefaultHarness != "goose2" {
+		t.Errorf("default_harness = %q, want goose2", cfg.DefaultHarness)
+	}
+	if _, ok := cfg.Harnesses["goose2"]; !ok {
+		t.Error("renamed harness goose2 missing")
+	}
+	if _, ok := cfg.Harnesses["goose"]; ok {
+		t.Error("old name goose should be gone after rename")
+	}
+}
+
+// TestModifyRenameRejectsCollision confirms renaming onto an existing harness is
+// refused and leaves the file untouched.
+func TestModifyRenameRejectsCollision(t *testing.T) {
+	m, path := configModel(t, `default_harness = "opencode"
+
+[harness.goose]
+adapter = "generic"
+command = "goose"
+
+[harness.hare]
+adapter = "generic"
+command = "hare"
+`)
+	before, _ := os.ReadFile(path)
+	m = openModify(t, m, "goose")
+	m.formInputs[fieldName].SetValue("hare") // collide
+
+	next, _ := m.submitHarness()
+	m = next.(model)
+	if m.formErr == "" || !m.addingHarness {
+		t.Error("rename collision should be rejected and keep the form open")
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Error("config file must be unchanged after a rejected rename")
+	}
+}
+
 func TestAddHarnessWritesAndReloads(t *testing.T) {
 	m, path := formModel(t)
 	m.formInputs[fieldName].SetValue("goose")

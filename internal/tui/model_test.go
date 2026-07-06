@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,6 +30,7 @@ func newTestModel(sessions []*session.Session) model {
 		formInputs:  newFormInputs(),
 		onComposer:  true,
 		harnesses:   harnessNames(cfg),
+		searchInput: textinput.New(),
 		width:       120,
 		height:      40,
 		allSessions: grp,
@@ -374,6 +376,159 @@ func TestPickerArrowsDoNotMoveSessionSelection(t *testing.T) {
 	}
 	if !m.onComposer {
 		t.Error("picker arrows leaked into session navigation")
+	}
+}
+
+// TestPickerSearchFiltering confirms that typing letters filters the harness
+// list, and the current pickIdx is clamped to the filtered results.
+func TestPickerSearchFiltering(t *testing.T) {
+	m := newTestModel(nil) // built-in: opencode, pi (opencode is default)
+	m = send(m, "tab")
+	if !m.picking {
+		t.Fatal("picker not open")
+	}
+	// Typing 'o' should focus the search bar and filter.
+	m = send(m, "o")
+	if !m.searchFocused {
+		t.Fatal("search should be focused after typing")
+	}
+	filtered := m.filteredHarnesses()
+	if len(filtered) != 1 || filtered[0] != "opencode" {
+		t.Errorf("filtered = %v, want [opencode]", filtered)
+	}
+	// Enter should select it.
+	m = send(m, "enter")
+	if m.picking {
+		t.Fatal("enter did not close picker")
+	}
+	if m.harness() != "opencode" {
+		t.Errorf("selected harness = %q, want opencode", m.harness())
+	}
+}
+
+// TestPickerSearchEsc verifies Esc from the search box closes the picker (a
+// single Esc closes everything from the picker).
+func TestPickerSearchEsc(t *testing.T) {
+	m := newTestModel(nil)
+	m = send(m, "tab")
+	m = send(m, "p") // type into the search box
+	if !m.searchFocused {
+		t.Fatal("search not focused")
+	}
+	// Esc from the search box closes the picker.
+	m = send(m, "esc")
+	if m.picking {
+		t.Fatal("esc did not close picker")
+	}
+}
+
+// TestPickerOpensSearchable confirms the picker opens with the search box
+// focused so a letter filters rather than triggering a command — in particular
+// 'd' must not silently change the default harness.
+func TestPickerOpensSearchable(t *testing.T) {
+	m := newTestModel(nil)
+	m = send(m, "tab")
+	if !m.searchFocused {
+		t.Fatal("picker should open with the search box focused")
+	}
+	m = send(m, "d") // 'd' filters here; it only sets the default on the action row
+	if !m.picking {
+		t.Fatal("'d' closed the picker instead of filtering")
+	}
+	if m.search != "d" {
+		t.Errorf("search = %q, want d", m.search)
+	}
+}
+
+// TestPickerArrowsNavigateWhileSearching confirms ↑/↓ move the highlight even
+// while the search box is focused, so a non-top match can be selected.
+func TestPickerArrowsNavigateWhileSearching(t *testing.T) {
+	m := newTestModel(nil) // opencode (default), pi
+	m = send(m, "tab")
+	if !m.searchFocused {
+		t.Fatal("picker should open with the search box focused")
+	}
+	m = send(m, "down") // navigate to pi while still in the search box
+	if m.pickIdx != 1 {
+		t.Fatalf("pickIdx = %d, want 1 (arrows must navigate while searching)", m.pickIdx)
+	}
+	m = send(m, "enter")
+	if m.harness() != "pi" {
+		t.Errorf("selected harness = %q, want pi", m.harness())
+	}
+}
+
+// TestPickerDefaultKey ensures pressing 'd' on the action row while a harness is
+// highlighted sets it as the default in the config.
+func TestPickerDefaultKey(t *testing.T) {
+	m := newTestModel(nil)
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.toml")
+	data := `default_harness = "opencode"` + "\n"
+	os.WriteFile(cfgPath, []byte(data), 0o600)
+	m.deps.ConfigPath = cfgPath
+
+	m = send(m, "tab")  // open picker (search focused), pickIdx = 0 (opencode)
+	m = send(m, "tab")  // switch to the action row so 'd' is a command
+	m = send(m, "down") // move to pi (pickIdx = 1)
+	if m.pickIdx != 1 {
+		t.Errorf("pickIdx = %d, want 1", m.pickIdx)
+	}
+	// Press 'd' to set pi as default.
+	m = send(m, "d")
+	if m.picking {
+		t.Fatal("'d' did not close picker")
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.DefaultHarness != "pi" {
+		t.Errorf("default_harness = %q, want pi", cfg.DefaultHarness)
+	}
+}
+
+// TestPickerScroll verifies that arrow keys scroll the list when there are
+// more harnesses than visible rows.
+func TestPickerScroll(t *testing.T) {
+	cfg := config.Default()
+	cfg.DefaultHarness = "a"
+	cfg.Harnesses = map[string]config.Harness{
+		"a": {Adapter: "generic", Command: "a"},
+		"b": {Adapter: "generic", Command: "b"},
+		"c": {Adapter: "generic", Command: "c"},
+		"d": {Adapter: "generic", Command: "d"},
+		"e": {Adapter: "generic", Command: "e"},
+		"f": {Adapter: "generic", Command: "f"},
+		"g": {Adapter: "generic", Command: "g"},
+	}
+	names := harnessNames(cfg)
+	m := model{
+		deps:          Deps{Cfg: cfg},
+		harnesses:     names,
+		picking:       true,
+		pickIdx:       0,
+		searchFocused: false,
+		search:        "",
+		pickScroll:    0,
+		width:         80,
+		height:        20,
+	}
+	m.searchInput = textinput.New()
+	m.searchInput.Prompt = ""
+	m.searchInput.Placeholder = "search..."
+	m.searchInput.CharLimit = 80
+	m.searchInput.TextStyle = lipgloss.NewStyle().Foreground(colWhite)
+
+	vis := m.visibleRows()
+	if vis > 6 {
+		t.Errorf("visibleRows = %d, expected <= 6 for height 20", vis)
+	}
+	for i := 0; i < vis+2; i++ {
+		m = send(m, "down")
+	}
+	if m.pickScroll == 0 {
+		t.Error("pickScroll should have increased")
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -48,10 +49,14 @@ type model struct {
 	// harnesses lists the configured harness names; harnessIdx selects which
 	// one new sessions launch with. Tab opens a picker (scales to many
 	// harnesses, unlike cycling).
-	harnesses  []string
-	harnessIdx int
-	picking    bool // harness picker is open
-	pickIdx    int  // highlighted row in the picker
+	harnesses     []string
+	harnessIdx    int
+	picking       bool            // harness picker is open
+	pickIdx       int             // highlighted row in the picker
+	searchInput   textinput.Model // search input in the harness picker
+	searchFocused bool            // search input currently has keyboard focus
+	search        string          // current search filter text
+	pickScroll    int             // scroll offset within filtered list
 
 	allSessions []*session.Session // full scoped list
 	sessions    []*session.Session // filtered display list (grouped)
@@ -66,7 +71,8 @@ type model struct {
 	filter      string
 	filterInput textinput.Model
 
-	addingHarness bool
+	addingHarness bool   // the harness form (add or modify) is open
+	editHarness   string // "" = adding a new harness; else the name being modified
 	formInputs    []textinput.Model
 	formField     int
 	formErr       string
@@ -127,15 +133,23 @@ func Run(deps Deps) error {
 	fi.CharLimit = 80
 	fi.TextStyle = lipgloss.NewStyle().Foreground(colWhite)
 
+	si := textinput.New()
+	si.Prompt = ""
+	si.Placeholder = "search..."
+	si.CharLimit = 80
+	si.TextStyle = lipgloss.NewStyle().Foreground(colWhite)
+
 	m := model{
-		deps:        deps,
-		composer:    ta,
-		renameInput: ri,
-		filterInput: fi,
-		formInputs:  newFormInputs(),
-		onComposer:  true,
-		harnesses:   harnessNames(deps.Cfg),
-		path:        headerPath(deps.Scope),
+		deps:          deps,
+		composer:      ta,
+		renameInput:   ri,
+		filterInput:   fi,
+		formInputs:    newFormInputs(),
+		onComposer:    true,
+		harnesses:     harnessNames(deps.Cfg),
+		path:          headerPath(deps.Scope),
+		searchInput:   si,
+		searchFocused: false,
 	}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
@@ -266,6 +280,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.composer.SetWidth(max(20, msg.Width-2))
 		m.syncComposerHeight() // wrap width changed, so the row count may have too
 		m.renameInput.Width = max(20, msg.Width-4)
+		if m.addingHarness {
+			m.syncFormWidths() // keep the form inputs sized to the (resized) modal
+		}
 		return m, nil
 
 	case sessionsMsg:
@@ -435,11 +452,17 @@ func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyTab:
 		// Always open the picker — even with one (or zero) harnesses it is the
-		// only way to reach the '+' add-harness form.
+		// only way to reach the '+' add-harness form. It opens with the search box
+		// focused (type to filter); Tab inside toggles to the single-key action row.
 		m.picking = true
 		m.pickIdx = m.harnessIdx
+		m.search = ""
+		m.searchInput.SetValue("")
+		m.pickScroll = 0
+		m.searchFocused = true
+		m.ensurePickVisible() // reveal the current harness even when it sits below the fold
 		m.composer.Blur()
-		return m, nil
+		return m, m.searchInput.Focus()
 	case msg.Type == tea.KeyCtrlO, msg.Type == tea.KeyEnter && msg.Alt:
 		// Launch + attach; an empty prompt opens a fresh harness to type in.
 		prompt := strings.TrimSpace(m.composer.Value())
@@ -482,30 +505,148 @@ func (m *model) syncComposerHeight() {
 	m.composer.SetHeight(min(max(rows, 1), maxRows))
 }
 
-// updatePickKey runs while the harness picker is open: ↑/↓ move, Enter picks,
-// '+' opens the add-harness form, Esc/Tab cancels.
+// updatePickKey runs while the harness picker is open. It opens with the search
+// box focused: printable keys filter, ↑/↓ move the highlight, Enter selects,
+// Esc cancels, '+' adds. Tab toggles to the action row, where 'd' sets the
+// highlighted harness as default and 'm' modifies it — single keys that would
+// otherwise be swallowed as search text.
 func (m model) updatePickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// '+' always opens the add-harness form, in either focus.
 	if msg.Type == tea.KeyRunes && string(msg.Runes) == "+" {
 		return m.startAddHarness()
 	}
+	// Navigation, selection and cancel behave the same whether or not the search
+	// box holds focus, so the arrows move the list even while filtering.
 	switch msg.Type {
 	case tea.KeyUp:
-		if m.pickIdx > 0 {
-			m.pickIdx--
-		}
+		m.movePick(-1)
+		return m, nil
 	case tea.KeyDown:
-		if m.pickIdx < len(m.harnesses)-1 {
-			m.pickIdx++
-		}
+		m.movePick(1)
+		return m, nil
 	case tea.KeyEnter:
-		m.harnessIdx = m.pickIdx
-		m.picking = false
-		return m, m.composer.Focus()
-	case tea.KeyEsc, tea.KeyTab:
-		m.picking = false
-		return m, m.composer.Focus()
+		return m.pickHarness()
+	case tea.KeyEsc:
+		return m.cancelPick()
+	case tea.KeyTab:
+		m.searchFocused = !m.searchFocused
+		if m.searchFocused {
+			return m, m.searchInput.Focus()
+		}
+		m.searchInput.Blur()
+		return m, nil
+	}
+	if m.searchFocused {
+		// Typing filters the list; the highlight resets to the top match.
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		m.search = m.searchInput.Value()
+		m.pickIdx = 0
+		m.pickScroll = 0
+		return m, cmd
+	}
+	// Action row: single-key harness commands.
+	if msg.Type == tea.KeyRunes {
+		switch string(msg.Runes) {
+		case "d":
+			return m.setDefaultHarness()
+		case "m":
+			return m.startModifyHarness()
+		}
 	}
 	return m, nil
+}
+
+// movePick moves the highlight by delta within the filtered list, scrolling the
+// window so the selected row stays visible.
+func (m *model) movePick(delta int) {
+	n := len(m.filteredHarnesses())
+	if n == 0 {
+		return
+	}
+	m.pickIdx = min(max(m.pickIdx+delta, 0), n-1)
+	m.ensurePickVisible()
+}
+
+// ensurePickVisible scrolls the picker window so pickIdx lands within the
+// visible rows — used on open (the selection may sit below the fold) and after
+// each move.
+func (m *model) ensurePickVisible() {
+	vis := m.visibleRows()
+	if m.pickIdx < m.pickScroll {
+		m.pickScroll = m.pickIdx
+	} else if m.pickIdx >= m.pickScroll+vis {
+		m.pickScroll = m.pickIdx - vis + 1
+	}
+	if m.pickScroll < 0 {
+		m.pickScroll = 0
+	}
+}
+
+// filteredHarnesses returns harness names matching the search text,
+// case-insensitive substring match on the name.
+func (m model) filteredHarnesses() []string {
+	if m.search == "" {
+		return m.harnesses
+	}
+	q := strings.ToLower(m.search)
+	var out []string
+	for _, name := range m.harnesses {
+		if strings.Contains(strings.ToLower(name), q) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// visibleRows returns the number of harness rows that fit in the list area,
+// clamped between 5 and 12 based on terminal height.
+func (m model) visibleRows() int {
+	h := min(16, max(8, m.height/3))
+	return max(5, h-4)
+}
+
+// pickHarness selects the highlighted harness and closes the picker.
+func (m model) pickHarness() (tea.Model, tea.Cmd) {
+	filtered := m.filteredHarnesses()
+	if len(filtered) == 0 {
+		m.picking = false
+		m.searchFocused = false
+		return m, m.composer.Focus()
+	}
+	name := filtered[m.pickIdx]
+	m.harnessIdx = slices.Index(m.harnesses, name)
+	m.picking = false
+	m.searchFocused = false
+	return m, m.composer.Focus()
+}
+
+// cancelPick closes the picker without selecting.
+func (m model) cancelPick() (tea.Model, tea.Cmd) {
+	m.picking = false
+	m.searchFocused = false
+	return m, m.composer.Focus()
+}
+
+// setDefaultHarness sets the highlighted harness as the default, writes to
+// the config file, and closes the picker.
+func (m model) setDefaultHarness() (tea.Model, tea.Cmd) {
+	filtered := m.filteredHarnesses()
+	if len(filtered) == 0 {
+		return m.cancelPick()
+	}
+	name := filtered[m.pickIdx]
+	m.deps.Cfg.DefaultHarness = name
+	// Also select the harness (same as pressing enter).
+	m.harnessIdx = slices.Index(m.harnesses, name)
+	m.picking = false
+	m.searchFocused = false
+	if err := setDefaultInConfig(m.deps.ConfigPath, name); err != nil {
+		m.status = "set default failed: " + err.Error()
+		return m, m.composer.Focus()
+	}
+	m.status = "set " + name + " as default"
+	return m, m.composer.Focus()
 }
 
 // updateSessionKey runs while a session is selected. Plain letters act on it

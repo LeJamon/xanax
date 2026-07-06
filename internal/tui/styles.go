@@ -26,6 +26,11 @@ var (
 // the prompt stays "orange or yellow" everywhere rather than mimicking an error.
 var warnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 
+// pickBarBg is the subtle slate highlight behind the selected harness-picker
+// row (Telescope-style). A fixed dark tint rather than a theme color: it only
+// needs to read as "slightly lighter than the terminal" on any dark palette.
+var pickBarBg = lipgloss.Color("#33334d")
+
 func init() { applyTheme(config.DefaultTheme()) }
 
 // applyTheme rebuilds every color and derived style from t. t is expected to

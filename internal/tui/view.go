@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -9,6 +10,122 @@ import (
 
 	"xanax/internal/session"
 )
+
+// pickerModalWidth returns the modal's content width (the columns between the
+// two vertical borders), scaled to ~65% of the terminal and clamped so the box
+// never overflows a narrow window.
+func pickerModalWidth(termWidth int) int {
+	w := int(math.Max(40, math.Min(float64(termWidth)*0.65, 80)))
+	return min(w, max(20, termWidth-2))
+}
+
+// modalBox draws body inside a rounded border colored col, w columns wide (the
+// span between the two vertical bars), with title centered on the top edge.
+// Each body line is clamped and padded to exactly w columns, so callers control
+// their own inner margins — a full-width selection bar reaches both borders.
+func modalBox(col lipgloss.Color, w int, title, body string) string {
+	bd := lipgloss.RoundedBorder()
+	edge := lipgloss.NewStyle().Foreground(col)
+	left, right := edge.Render(bd.Left), edge.Render(bd.Right)
+	var b strings.Builder
+	b.WriteString(borderTop(bd, edge, w, title))
+	b.WriteByte('\n')
+	for ln := range strings.SplitSeq(body, "\n") {
+		ln = lipgloss.NewStyle().MaxWidth(w).Render(ln)
+		pad := max(0, w-lipgloss.Width(ln))
+		b.WriteString(left)
+		b.WriteString(ln)
+		b.WriteString(strings.Repeat(" ", pad))
+		b.WriteString(right)
+		b.WriteByte('\n')
+	}
+	bottom := edge.Render(bd.BottomLeft + strings.Repeat(bd.Bottom, w) + bd.BottomRight)
+	b.WriteString(bottom)
+	return b.String()
+}
+
+// borderTop builds a box's top edge with title centered among the dashes.
+func borderTop(bd lipgloss.Border, edge lipgloss.Style, w int, title string) string {
+	if title == "" {
+		return edge.Render(bd.TopLeft + strings.Repeat(bd.Top, w) + bd.TopRight)
+	}
+	t := " " + title + " "
+	tw := min(lipgloss.Width(t), w)
+	left := (w - tw) / 2
+	right := w - tw - left
+	return edge.Render(bd.TopLeft+strings.Repeat(bd.Top, left)) +
+		groupStyle.Foreground(colAccent).Render(t) +
+		edge.Render(strings.Repeat(bd.Top, right)+bd.TopRight)
+}
+
+// renderPickerModal draws the harness picker as two stacked Telescope-style
+// panels: a "Harnesses" results box above a search box that carries the prompt
+// and a live match count. The whole block is returned left-aligned; the caller
+// centers it in the terminal.
+func (m model) renderPickerModal() string {
+	w := pickerModalWidth(m.width)
+	filtered := m.filteredHarnesses()
+
+	// Results panel — a fixed-height window sized to the harness count (so it
+	// does not jump as filtering narrows the matches) but capped to what fits.
+	rows := min(m.visibleRows(), max(1, len(m.harnesses)))
+	start := m.pickScroll
+	if start > len(filtered)-rows {
+		start = max(0, len(filtered)-rows)
+	}
+	start = max(0, start)
+	end := min(start+rows, len(filtered))
+
+	var lines []string
+	if len(filtered) == 0 {
+		lines = append(lines, "   "+mutedStyle.Render("no matching harness"))
+	} else {
+		for i := start; i < end; i++ {
+			lines = append(lines, m.pickRow(filtered[i], i == m.pickIdx, w))
+		}
+	}
+	for len(lines) < rows { // keep the panel height stable while filtering
+		lines = append(lines, "")
+	}
+	results := modalBox(colMuted, w, "Harnesses", strings.Join(lines, "\n"))
+
+	// Search panel — accent prompt, the live search input, and a match count
+	// (matches / total) pinned to the right edge, mirroring Telescope.
+	prompt := cursorStyle.Render(" > ") + m.searchInput.View()
+	count := mutedStyle.Render(fmt.Sprintf("%d / %d ", len(filtered), len(m.harnesses)))
+	search := modalBox(colMuted, w, "Switch harness", padRight(prompt, count, w))
+
+	return results + "\n" + search
+}
+
+// pickRow renders one harness entry: the name on the left, its adapter and any
+// (current)/(default) tag muted on the right. The selected row is drawn as a
+// full-width highlight bar; every segment carries the bar background so inner
+// style resets do not punch holes in it.
+func (m model) pickRow(name string, selected bool, w int) string {
+	adapter := m.deps.Cfg.Harnesses[name].Adapter
+	meta := adapter
+	switch name {
+	case m.harnesses[m.harnessIdx]:
+		meta += "  (current)"
+	case m.deps.Cfg.DefaultHarness:
+		meta += "  (default)"
+	}
+	if !selected {
+		return padRight("   "+name, mutedStyle.Render(meta+" "), w)
+	}
+	bar := func(fg lipgloss.Color, bold bool) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(fg).Background(pickBarBg).Bold(bold)
+	}
+	left := bar(colAccent, true).Render(" ▸ " + name)
+	right := bar(colMuted, false).Render(meta + " ")
+	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 0 { // no room for the meta — drop it and just fill the bar
+		right = ""
+		gap = max(0, w-lipgloss.Width(left))
+	}
+	return left + bar(colMuted, false).Render(strings.Repeat(" ", gap)) + right
+}
 
 func (m model) View() string {
 	if m.width == 0 {
@@ -18,35 +135,66 @@ func (m model) View() string {
 	if p := m.renderPreview(); p != "" {
 		top += "\n" + p
 	}
-	bottom := m.inputBlock() + "\n" + m.footer()
-
-	// Clamp every line to the terminal width so nothing soft-wraps. lipgloss
-	// measures newline-delimited lines, so a wrapped header (long path, error,
-	// or filter) or footer hint would make the gap math below undercount the
-	// real rows and push the prompt off the bottom of the screen.
+	// Clamp every line to the terminal width so nothing soft-wraps.
 	fit := lipgloss.NewStyle().MaxWidth(m.width)
-	top, bottom = fit.Render(top), fit.Render(bottom)
+	top = fit.Render(top)
 
-	// Pin the prompt box and footer to the bottom of the screen, filling the gap
-	// between the session list and the input so a short list doesn't leave the
-	// composer floating mid-screen. When content is taller than the terminal the
-	// gap collapses to a single blank line and the top scrolls off, keeping the
-	// prompt in view.
+	if modal := m.centeredModal(); modal != "" {
+		return m.renderCenteredModal(top, modal)
+	}
+
+	bottom := m.inputBlock() + "\n" + m.footer()
+	bottom = fit.Render(bottom)
+
 	gap := max(1, m.height-lipgloss.Height(top)-lipgloss.Height(bottom)+1)
 	return top + strings.Repeat("\n", gap) + bottom
 }
 
+// centeredModal returns the modal that floats over the dashboard — the harness
+// picker or the harness add/modify form — or "" when neither is open.
+func (m model) centeredModal() string {
+	switch {
+	case m.picking:
+		return m.renderPickerModal()
+	case m.addingHarness:
+		return m.renderHarnessFormModal()
+	}
+	return ""
+}
+
+// renderCenteredModal floats a modal in the vertical center of the terminal: the
+// header/session list stays at the top for context and the footer pins to the
+// bottom, with blank rows above and below the modal splitting the slack so the
+// box lands in the middle of the screen.
+func (m model) renderCenteredModal(top, modal string) string {
+	modal = lipgloss.PlaceHorizontal(m.width, lipgloss.Center, modal)
+	footer := lipgloss.NewStyle().MaxWidth(m.width).Render(m.footer())
+
+	modalH := lipgloss.Height(modal)
+	above := max(0, (m.height-modalH)/2) // equal space above and below centers the modal
+	below := max(0, m.height-modalH-above)
+	blankAbove := max(0, above-lipgloss.Height(top))
+	blankBelow := max(0, below-lipgloss.Height(footer))
+
+	var b strings.Builder
+	b.WriteString(top)
+	b.WriteByte('\n')
+	b.WriteString(strings.Repeat("\n", blankAbove))
+	b.WriteString(modal)
+	b.WriteByte('\n')
+	b.WriteString(strings.Repeat("\n", blankBelow))
+	b.WriteString(footer)
+	return b.String()
+}
+
 // inputBlock renders whichever editor occupies the bottom prompt slot: the
-// always-present composer, or a modal editor (rename, harness form/picker,
-// filter) when one is open.
+// always-present composer, or a modal editor (rename, filter) when one is open.
+// The harness picker and add/modify form float as centered modals instead (see
+// centeredModal), so they are not listed here.
 func (m model) inputBlock() string {
 	switch {
 	case m.renaming:
 		return m.renderRename()
-	case m.addingHarness:
-		return m.renderHarnessForm()
-	case m.picking:
-		return m.renderPicker()
 	case m.filtering:
 		return m.renderFilter()
 	default:
@@ -229,44 +377,36 @@ func (m model) renderComposer(selected bool) string {
 	return label + "\n" + hRules(color, m.width).Render(m.composer.View())
 }
 
-// renderHarnessForm draws the add-harness form in the composer's slot.
-func (m model) renderHarnessForm() string {
-	var b strings.Builder
-	b.WriteString(groupStyle.Foreground(colAccent).Render("Add harness (generic)"))
-	b.WriteString(mutedStyle.Render("  ·  tab next field, enter save, esc cancel"))
-	b.WriteByte('\n')
-	for i, in := range m.formInputs {
-		marker := "  "
-		if i == m.formField {
-			marker = cursorStyle.Render("▸ ")
-		}
-		fmt.Fprintf(&b, "%s%s %s\n", marker, fieldStyle.Render(fmt.Sprintf("%-22s", formLabels[i])), in.View())
+// renderHarnessFormModal draws the harness add/modify form as a centered modal
+// matching the picker: a titled box with one labelled input per row, the focused
+// row marked with an accent ▸, and a trailing status line (error, or the adapter
+// being edited). editHarness switches the title between add and modify.
+func (m model) renderHarnessFormModal() string {
+	w := pickerModalWidth(m.width)
+	title := "Add harness (generic)"
+	if m.editHarness != "" {
+		title = "Modify harness: " + m.editHarness
 	}
-	if m.formErr != "" {
-		b.WriteString(errStyle.Render("  " + m.formErr))
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
 
-// renderPicker draws the harness selector in the composer's slot: one row per
-// configured harness, ↑/↓ to move, enter to pick, + to add a new one.
-func (m model) renderPicker() string {
-	label := groupStyle.Foreground(colAccent).Render("Select harness") +
-		mutedStyle.Render("  ·  ↑/↓ move, enter select, + add, esc cancel")
-	var rows []string
-	for i, name := range m.harnesses {
-		adapter := m.deps.Cfg.Harnesses[name].Adapter
-		line := "  " + name
-		if i == m.pickIdx {
-			line = cursorStyle.Render("▸ ") + selectStyle.Render(name)
+	var lines []string
+	for i, in := range m.formInputs {
+		label := fmt.Sprintf("%-*s", formLabelCol, formLabels[i])
+		if i == m.formField {
+			lines = append(lines, cursorStyle.Render(" ▸ ")+groupStyle.Render(label)+" "+in.View())
+		} else {
+			lines = append(lines, "   "+fieldStyle.Render(label)+" "+in.View())
 		}
-		if i == m.harnessIdx {
-			line += mutedStyle.Render("  (current)")
-		}
-		line += mutedStyle.Render("  · " + adapter)
-		rows = append(rows, line)
 	}
-	return label + "\n" + hRules(colAccent, m.width).Render(strings.Join(rows, "\n"))
+	lines = append(lines, "")
+	switch {
+	case m.formErr != "":
+		lines = append(lines, "   "+errStyle.Render(m.formErr))
+	case m.editHarness != "":
+		lines = append(lines, "   "+mutedStyle.Render("adapter: "+m.deps.Cfg.Harnesses[m.editHarness].Adapter+"  ·  command splits on spaces"))
+	default:
+		lines = append(lines, "   "+mutedStyle.Render("command splits into command + args on spaces"))
+	}
+	return modalBox(colMuted, w, title, strings.Join(lines, "\n"))
 }
 
 // renderFilter draws the filter input bar.
@@ -295,7 +435,11 @@ func (m model) footer() string {
 	case m.renaming:
 		hint = "enter save · esc cancel"
 	case m.picking:
-		hint = "↑/↓ move · enter select · + add · esc cancel"
+		if m.searchFocused {
+			hint = "type to search · ↑/↓ move · enter select · + add · tab for d/m · esc"
+		} else {
+			hint = "d default · m modify · ↑/↓ move · enter select · + add · tab search · esc"
+		}
 	case m.filtering:
 		hint = "type to filter · enter apply · esc clear"
 	case m.onComposer:
