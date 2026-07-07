@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
 	"xanax/internal/attach"
@@ -29,12 +27,7 @@ func newAttachCmd() *cobra.Command {
 				return err
 			}
 			if !attach.Alive(e.socketPath(sess.ID)) {
-				if sess.Status.Terminal() {
-					return fmt.Errorf("session %s has ended (%s); use `xanax resume %s`",
-						shortID(sess.ID), sess.Status, shortID(sess.ID))
-				}
-				return fmt.Errorf("session %s is not reachable; use `xanax resume %s`",
-					shortID(sess.ID), shortID(sess.ID))
+				return e.sessionUnavailableError(st, sess)
 			}
 			return runAttach(e, sess.ID)
 		},

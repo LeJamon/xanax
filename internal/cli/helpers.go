@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,7 +11,9 @@ import (
 	"time"
 
 	"xanax/internal/attach"
+	"xanax/internal/config"
 	"xanax/internal/session"
+	"xanax/internal/store"
 )
 
 // socketPath is the unix socket for a session's supervisor.
@@ -22,6 +25,99 @@ func (e *env) socketPath(id string) string {
 // config.Config.CanResume so the CLI and the dashboard share one definition.
 func (e *env) canResume(sess *session.Session) bool {
 	return e.cfg.CanResume(sess)
+}
+
+func (e *env) checkHarnessCommand(name string, h config.Harness) error {
+	if h.Command == "" {
+		return fmt.Errorf("harness %q has no command configured; set [harness.%s].command in %s",
+			name, name, e.paths.ConfigFile)
+	}
+	if _, err := exec.LookPath(h.Command); err != nil {
+		return fmt.Errorf("harness %q command %q is not available: %w\nInstall the harness, or set [harness.%s].command in %s",
+			name, h.Command, err, name, e.paths.ConfigFile)
+	}
+	return nil
+}
+
+func (e *env) supervisorLogPath(id string) string {
+	return filepath.Join(e.paths.LogsDir, id+".supervisor.log")
+}
+
+func (e *env) waitForSocketOrTerminal(st *store.Store, id string, timeout time.Duration) (alive bool, terminal *session.Session) {
+	deadline := time.Now().Add(timeout)
+	path := e.socketPath(id)
+	for time.Now().Before(deadline) {
+		if attach.Alive(path) {
+			return true, nil
+		}
+		if sess, err := st.GetSession(id); err == nil && sess.Status.Terminal() {
+			return false, sess
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if sess, err := st.GetSession(id); err == nil && sess.Status.Terminal() {
+		return false, sess
+	}
+	return false, nil
+}
+
+func (e *env) supervisorStartingError(id string, timeout time.Duration) error {
+	return fmt.Errorf("supervisor for session %s did not become reachable within %s\nSupervisor log: %s",
+		shortID(id), timeout, e.supervisorLogPath(id))
+}
+
+func (e *env) sessionUnavailableError(st *store.Store, sess *session.Session) error {
+	if sess.Status.Terminal() {
+		if sess.Status == session.StatusFailed {
+			return fmt.Errorf("%s\nInspect raw output with: xanax logs %s",
+				e.failureSummary(st, sess), shortID(sess.ID))
+		}
+		if e.canResume(sess) {
+			return fmt.Errorf("session %s has ended (%s); use `xanax resume %s`",
+				shortID(sess.ID), sess.Status, shortID(sess.ID))
+		}
+		return fmt.Errorf("session %s has ended (%s); inspect logs with `xanax logs %s`",
+			shortID(sess.ID), sess.Status, shortID(sess.ID))
+	}
+	if e.canResume(sess) {
+		return fmt.Errorf("session %s is not reachable; use `xanax resume %s`",
+			shortID(sess.ID), shortID(sess.ID))
+	}
+	return fmt.Errorf("session %s is not reachable; inspect logs with `xanax logs %s`\nSupervisor log: %s",
+		shortID(sess.ID), shortID(sess.ID), e.supervisorLogPath(sess.ID))
+}
+
+func (e *env) failureSummary(st *store.Store, sess *session.Session) string {
+	detail := failureDetail(st, sess)
+	if detail == "" {
+		detail = "no failure detail recorded"
+	}
+	return fmt.Sprintf("session %s failed: %s\nSupervisor log: %s",
+		shortID(sess.ID), detail, e.supervisorLogPath(sess.ID))
+}
+
+func failureDetail(st *store.Store, sess *session.Session) string {
+	if detail := strings.TrimSpace(sess.StatusDetail); detail != "" {
+		return detail
+	}
+	events, err := st.ListEvents(sess.ID)
+	if err != nil {
+		return ""
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type != "error" {
+			continue
+		}
+		var payload struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(events[i].Payload), &payload); err == nil {
+			if msg := strings.TrimSpace(payload.Message); msg != "" {
+				return msg
+			}
+		}
+	}
+	return ""
 }
 
 // spawnSupervisor starts a detached `xanax _supervise <id>` process that

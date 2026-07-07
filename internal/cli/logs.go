@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"xanax/internal/session"
 )
 
 func newLogsCmd() *cobra.Command {
@@ -32,15 +34,22 @@ func newLogsCmd() *cobra.Command {
 				return err
 			}
 			path := filepath.Join(e.paths.LogsDir, sess.ID+".raw")
+			out := cmd.OutOrStdout()
 			f, err := os.Open(path)
 			if err != nil {
+				if sess.Status == session.StatusFailed {
+					fmt.Fprintln(out, e.failureSummary(st, sess))
+					return nil
+				}
 				return fmt.Errorf("no log for session %s", shortID(sess.ID))
 			}
 			defer f.Close()
 
-			out := cmd.OutOrStdout()
 			pos, _ := io.Copy(out, f)
 			if !follow {
+				if pos == 0 && sess.Status == session.StatusFailed {
+					fmt.Fprintln(out, e.failureSummary(st, sess))
+				}
 				return nil
 			}
 			// Follow: poll for growth. The raw log truncate-rotates at its cap,

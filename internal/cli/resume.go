@@ -41,14 +41,24 @@ func newResumeCmd() *cobra.Command {
 				return fmt.Errorf("session %s cannot be resumed (no harness session ref, and its harness has no resume_args)",
 					shortID(sess.ID))
 			}
+			h, ok := e.cfg.Harnesses[sess.Harness]
+			if !ok {
+				return fmt.Errorf("session %s uses unknown harness %q", shortID(sess.ID), sess.Harness)
+			}
+			if err := e.checkHarnessCommand(sess.Harness, h); err != nil {
+				return err
+			}
 			if _, err := e.spawnSupervisor(sess.ID, true); err != nil {
 				return err
 			}
 			st.RecordEvent(sess.ID, "resumed", map[string]any{"auto": false})
 			fmt.Fprintf(out, "Resuming session %s (%s)...\n", shortID(sess.ID), sess.Harness)
-			if !e.waitForSocket(sess.ID, 10*time.Second) {
-				fmt.Fprintf(out, "Supervisor is starting; attach with: xanax attach %s\n", shortID(sess.ID))
-				return nil
+			wait := 10 * time.Second
+			if alive, terminal := e.waitForSocketOrTerminal(st, sess.ID, wait); !alive {
+				if terminal != nil {
+					return e.sessionUnavailableError(st, terminal)
+				}
+				return e.supervisorStartingError(sess.ID, wait)
 			}
 			return runAttach(e, sess.ID)
 		},

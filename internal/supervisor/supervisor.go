@@ -523,7 +523,7 @@ func (s *Supervisor) fail(msg string) {
 	id := s.opts.Session.ID
 	s.log.Error("supervisor startup failed", "msg", msg)
 	s.opts.Store.RecordEvent(id, "error", map[string]any{"message": msg})
-	_ = s.opts.Store.Finish(id, session.StatusFailed, 1)
+	_ = s.opts.Store.FinishWithDetail(id, session.StatusFailed, 1, msg)
 }
 
 // --- socket / raw log helpers ---

@@ -36,8 +36,12 @@ func newNewCmd() *cobra.Command {
 			if harnessName == "" {
 				harnessName = e.cfg.DefaultHarness
 			}
-			if _, ok := e.cfg.Harnesses[harnessName]; !ok {
+			h, ok := e.cfg.Harnesses[harnessName]
+			if !ok {
 				return fmt.Errorf("unknown harness %q (see `xanax config`)", harnessName)
+			}
+			if err := e.checkHarnessCommand(harnessName, h); err != nil {
+				return err
 			}
 
 			repoAbs, err := filepath.Abs(repo)
@@ -73,7 +77,7 @@ func newNewCmd() *cobra.Command {
 			st.TouchRepository(repoAbs, filepath.Base(repoAbs))
 
 			if _, err := e.spawnSupervisor(sess.ID, false); err != nil {
-				st.Finish(sess.ID, session.StatusFailed, 1)
+				st.FinishWithDetail(sess.ID, session.StatusFailed, 1, err.Error())
 				return err
 			}
 
@@ -86,9 +90,12 @@ func newNewCmd() *cobra.Command {
 				fmt.Fprintf(out, "Attach with: xanax attach %s\n", shortID(sess.ID))
 				return nil
 			}
-			if !e.waitForSocket(sess.ID, 10*time.Second) {
-				fmt.Fprintf(out, "Supervisor is starting; attach with: xanax attach %s\n", shortID(sess.ID))
-				return nil
+			wait := 10 * time.Second
+			if alive, terminal := e.waitForSocketOrTerminal(st, sess.ID, wait); !alive {
+				if terminal != nil {
+					return e.sessionUnavailableError(st, terminal)
+				}
+				return e.supervisorStartingError(sess.ID, wait)
 			}
 			return runAttach(e, sess.ID)
 		},

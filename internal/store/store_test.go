@@ -132,6 +132,30 @@ func TestSetStatusAndExitCode(t *testing.T) {
 	}
 }
 
+func TestFinishWithDetail(t *testing.T) {
+	st := openTemp(t)
+	in := sample("22222222-0000-0000-0000-000000000002")
+	if err := st.CreateSession(in); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishWithDetail(in.ID, session.StatusFailed, 127, "exec: opencode: not found"); err != nil {
+		t.Fatalf("FinishWithDetail: %v", err)
+	}
+	got, err := st.GetSession(in.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != session.StatusFailed {
+		t.Errorf("status = %q, want failed", got.Status)
+	}
+	if got.ExitCode == nil || *got.ExitCode != 127 {
+		t.Errorf("exit code = %v, want 127", got.ExitCode)
+	}
+	if got.StatusDetail != "exec: opencode: not found" {
+		t.Errorf("detail = %q, want failure detail", got.StatusDetail)
+	}
+}
+
 // TestSetStatusIgnoresTerminalSession guards the terminal guard: a late state
 // write (e.g. a generic-adapter idle tick racing shutdown) must neither
 // resurrect a finished session nor be reported as an error.

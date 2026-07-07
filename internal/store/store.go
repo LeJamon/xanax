@@ -278,10 +278,16 @@ func (s *Store) SetSessionRef(id, ref string) error {
 
 // Finish records a terminal state, exit code, and end timestamp.
 func (s *Store) Finish(id string, status session.Status, exitCode int) error {
+	return s.FinishWithDetail(id, status, exitCode, "")
+}
+
+// FinishWithDetail records a terminal state, exit code, detail, and end
+// timestamp.
+func (s *Store) FinishWithDetail(id string, status session.Status, exitCode int, detail string) error {
 	now := fmtTime(time.Now().UTC())
 	return s.exec1(id,
-		`UPDATE sessions SET status = ?, exit_code = ?, updated_at = ?, ended_at = ? WHERE id = ?`,
-		string(status), exitCode, now, now, id,
+		`UPDATE sessions SET status = ?, status_detail = ?, exit_code = ?, updated_at = ?, ended_at = ? WHERE id = ?`,
+		string(status), nullStr(detail), exitCode, now, now, id,
 	)
 }
 
