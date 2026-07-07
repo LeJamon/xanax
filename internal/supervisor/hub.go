@@ -134,15 +134,16 @@ func (h *hub) broadcastExit(e wire.Exit) {
 // primer exactly matches the point where the live stream resumes.
 //
 // For a line-based harness the scrollback ring is replayed (history matters).
-// For a full-screen TUI (altScreen) the ring holds interleaved cursor-addressed
-// diff frames that garble when replayed — and the app won't repaint unchanged
-// cells — so the client receives an exact snapshot of the emulator's screen.
-func (h *hub) register(cl *client, altScreen bool) {
+// For a full-screen TUI (detected alt-screen or configured full_screen) the ring
+// holds interleaved cursor-addressed diff frames that garble when replayed, and
+// the app will not repaint unchanged cells, so the client receives an exact
+// snapshot of the emulator's screen.
+func (h *hub) register(cl *client, snapshotReplay bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	cl.enqueue(jsonFrame(wire.TypeHello, h.info))
 	primer := h.ring.Snapshot()
-	if altScreen {
+	if snapshotReplay {
 		primer = h.screen.snapshot()
 	}
 	// Re-enable sticky modes (mouse, bracketed paste, focus) the harness set —

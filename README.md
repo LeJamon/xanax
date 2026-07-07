@@ -95,6 +95,7 @@ command = "pi"
 [harness.codex]
 adapter           = "generic"
 command           = "codex"
+full_screen       = true                  # attach uses a screen snapshot, not raw replay
 prompt_positional = true                  # codex "<prompt>" starts a session with it
 resume_args       = ["resume", "--last"]  # reattach to the most recent session
 idle_timeout      = 120                   # no native state; mark "waiting" when idle
@@ -114,6 +115,8 @@ args        = ["session"]                # start goose's interactive session
 resume_args = ["session", "--resume"]    # resume the most recent session
 # A CLI that takes the prompt as a flag can set prompt_arg = "--flag"
 # (or prompt_positional = true) to skip typing it into the PTY.
+# Diff-rendered TUIs can set full_screen = true to attach from a screen snapshot
+# instead of raw scrollback replay.
 
 ```
 

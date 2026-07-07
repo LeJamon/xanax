@@ -324,7 +324,7 @@ func (s *Supervisor) serveClient(cl *client) {
 		}
 	}
 
-	s.hub.register(cl, s.altScreen.Load())
+	s.hub.register(cl, s.altScreen.Load() || s.opts.Harness.FullScreen)
 	defer s.hub.remove(cl)
 
 	for {
