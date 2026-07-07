@@ -832,8 +832,19 @@ func (m model) execInteractive(sub string, arg string) tea.Cmd {
 		if err != nil {
 			return actionDoneMsg{status: fmt.Sprintf("%s failed: %v", sub, err)}
 		}
-		return actionDoneMsg{}
+		return actionDoneMsg{status: interactiveSuccessStatus(sub, arg)}
 	})
+}
+
+func interactiveSuccessStatus(sub, id string) string {
+	switch sub {
+	case "attach", "resume":
+		return "detached from " + shortID(id) + " (still running)"
+	case "new":
+		return "detached from new session (still running)"
+	default:
+		return ""
+	}
 }
 
 // execKillRemove terminates a live session and deletes it from the store, so it
@@ -893,7 +904,7 @@ func (m model) execNewAttach(prompt string) tea.Cmd {
 		if err != nil {
 			return actionDoneMsg{status: "launch failed: " + err.Error(), restorePrompt: prompt}
 		}
-		return actionDoneMsg{}
+		return actionDoneMsg{status: interactiveSuccessStatus("new", "")}
 	})
 }
 

@@ -10,7 +10,11 @@ func newAttachCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "attach <session-id>",
 		Short: "Attach to a running session",
-		Args:  cobra.ExactArgs(1),
+		Long: `Attach to a running session.
+
+Inside the session window, press Left arrow or ctrl+\ to detach. The session
+keeps running after you detach.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := loadEnv()
 			if err != nil {

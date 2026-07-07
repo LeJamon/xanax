@@ -13,7 +13,11 @@ func newResumeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "resume <session-id>",
 		Short: "Reattach to a live session, or relaunch a dead one via the harness's native resume",
-		Args:  cobra.ExactArgs(1),
+		Long: `Reattach to a live session, or relaunch a dead one via the harness's native resume.
+
+Inside the session window, press Left arrow or ctrl+\ to detach. The session
+keeps running after you detach.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := loadEnv()
 			if err != nil {

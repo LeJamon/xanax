@@ -340,6 +340,35 @@ func TestRightOpensSelectedSession(t *testing.T) {
 	}
 }
 
+func TestInteractiveSuccessStatusStaysVisible(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	next, _ := m.Update(actionDoneMsg{status: interactiveSuccessStatus("attach", "run00001")})
+	foot := next.(model).footer()
+	if !strings.Contains(foot, "detached from run00001 (still running)") {
+		t.Fatalf("footer missing detach status: %q", foot)
+	}
+}
+
+func TestInteractiveSuccessStatusCoversAttachResumeAndNew(t *testing.T) {
+	tests := []struct {
+		sub  string
+		id   string
+		want string
+	}{
+		{sub: "attach", id: "run00001", want: "detached from run00001 (still running)"},
+		{sub: "resume", id: "resume01", want: "detached from resume01 (still running)"},
+		{sub: "new", want: "detached from new session (still running)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.sub, func(t *testing.T) {
+			if got := interactiveSuccessStatus(tt.sub, tt.id); got != tt.want {
+				t.Fatalf("interactiveSuccessStatus(%q, %q) = %q, want %q", tt.sub, tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenameUpdatesTitleInStore(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
 	if err != nil {
@@ -1233,6 +1262,13 @@ func TestFooterReflectsReboundKeys(t *testing.T) {
 	m.deps.Cfg.Keys.Remove = config.Binding{"x"}
 	if foot := m.footer(); !strings.Contains(foot, "x remove") {
 		t.Errorf("footer did not reflect the rebound remove key: %q", foot)
+	}
+}
+
+func TestSessionFooterShowsLeftBackHint(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	if foot := m.footer(); !strings.Contains(foot, "← back") {
+		t.Errorf("footer did not show left/back detach hint: %q", foot)
 	}
 }
 

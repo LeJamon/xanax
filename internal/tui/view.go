@@ -720,7 +720,7 @@ func (m model) footer() string {
 			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),
 			keyHint(k.Up), keyHint(k.Quit))
 	default:
-		hint = fmt.Sprintf("%s select · %s open · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
+		hint = fmt.Sprintf("%s select · %s open · ← back · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
 			updown, keyHint(k.Open), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
 			keyHint(k.Remove), keyHint(k.Settings), keyHint(k.Filter), keyHint(k.Quit))
 	}

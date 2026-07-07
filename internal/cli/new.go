@@ -24,7 +24,11 @@ func newNewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   `new [flags] "prompt"`,
 		Short: "Launch a new agent session",
-		Args:  cobra.ExactArgs(1),
+		Long: `Launch a new agent session.
+
+When xanax attaches to the new session, press Left arrow or ctrl+\ to detach.
+The session keeps running after you detach.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			prompt := args[0]
 			e, err := loadEnv()
