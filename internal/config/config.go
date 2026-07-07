@@ -31,6 +31,11 @@ type Harness struct {
 	ResumeArgs []string          `toml:"resume_args,omitempty"`
 	Env        map[string]string `toml:"env,omitempty"`
 
+	// FullScreen forces attach replay through the rendered screen snapshot even
+	// when the harness is not currently in the terminal alternate screen. Use it
+	// for diff-rendered TUIs whose raw scrollback cannot reconstruct the chat.
+	FullScreen bool `toml:"full_screen,omitempty"`
+
 	// Prompt delivery for the generic adapter. PromptArg passes the initial
 	// prompt as a flag value (command … <prompt_arg> "<prompt>"). PromptPositional
 	// appends it as the last argument (command … "<prompt>"). With neither set
@@ -198,6 +203,7 @@ func Default() *Config {
 				Adapter:          AdapterGeneric,
 				Command:          "codex",
 				ResumeArgs:       []string{"resume", "--last"},
+				FullScreen:       true,
 				PromptPositional: true,
 				IdleTimeout:      120,
 			},
@@ -358,6 +364,7 @@ type fileHarness struct {
 	Args       []string          `toml:"args,omitempty"`
 	ResumeArgs []string          `toml:"resume_args,omitempty"`
 	Env        map[string]string `toml:"env,omitempty"`
+	FullScreen *bool             `toml:"full_screen,omitempty"`
 
 	PromptArg        string `toml:"prompt_arg,omitempty"`
 	PromptPositional *bool  `toml:"prompt_positional,omitempty"`
@@ -416,6 +423,9 @@ func Load(path string) (*Config, error) {
 		}
 		if fh.ResumeArgs != nil {
 			merged.ResumeArgs = fh.ResumeArgs
+		}
+		if fh.FullScreen != nil {
+			merged.FullScreen = *fh.FullScreen
 		}
 		if fh.PromptArg != "" {
 			merged.PromptArg = fh.PromptArg

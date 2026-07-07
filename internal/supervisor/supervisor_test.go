@@ -211,6 +211,66 @@ func TestAttachFullScreenReplaysSnapshot(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 }
 
+// TestAttachConfiguredFullScreenReplaysSnapshotWithoutAltScreen covers
+// full-screen diff-rendered harnesses, such as codex, that should use a rendered
+// screen snapshot even when alternate-screen detection is unavailable.
+func TestAttachConfiguredFullScreenReplaysSnapshotWithoutAltScreen(t *testing.T) {
+	paths := testPaths(t)
+	st, err := store.Open(paths.DBFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	sess := &session.Session{
+		ID: "fsflag01", Title: "fullscreen flag", RepoPath: t.TempDir(),
+		Harness: "generic", Status: session.StatusStarting,
+	}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	h := config.Harness{
+		Adapter: config.AdapterGeneric, Command: "sh", FullScreen: true,
+		Args: []string{"-c", `printf 'RAW-HISTORY-ONLY'; printf '\033[2J\033[3;1HCURRENT-FRAME'; sleep 300`},
+	}
+
+	go supervisor.Run(supervisor.Options{
+		Session: sess, Harness: h, Paths: paths, Store: st, Logger: quietLogger(),
+	})
+
+	sock := filepath.Join(paths.SocketDir, sess.ID+".sock")
+	waitAlive(t, sock)
+	time.Sleep(500 * time.Millisecond)
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	var got []byte
+	conn.SetReadDeadline(time.Now().Add(1500 * time.Millisecond))
+	for range 20 {
+		f, err := wire.Read(conn)
+		if err != nil {
+			break
+		}
+		if f.Type == wire.TypeOutput {
+			got = append(got, f.Payload...)
+		}
+	}
+
+	if !bytes.Contains(got, []byte("CURRENT-FRAME")) {
+		t.Errorf("snapshot missing current screen content; got %.200q", got)
+	}
+	if bytes.Contains(got, []byte("RAW-HISTORY-ONLY")) {
+		t.Errorf("configured full-screen attach replayed raw history; got %.200q", got)
+	}
+
+	wire.WriteJSON(conn, wire.TypeKill, struct{}{})
+	time.Sleep(300 * time.Millisecond)
+}
+
 // TestAnswersTerminalQueriesBeforeAttach verifies the supervisor replies to a
 // startup DSR query so a TUI initializes correctly even though no client is
 // attached yet. The fake harness sends the query, reads back the 9-byte reply,

@@ -53,6 +53,9 @@ func TestLoadDefaultsWhenFileMissing(t *testing.T) {
 	if codex.IdleTimeout != 120 {
 		t.Errorf("codex default idle_timeout = %d, want 120", codex.IdleTimeout)
 	}
+	if !codex.FullScreen {
+		t.Error("codex default full_screen = false, want true")
+	}
 }
 
 func TestLoadMergesFileOverDefaults(t *testing.T) {
@@ -131,12 +134,16 @@ args = ["-a", "never", "-s", "workspace-write"]
 	if codex.IdleTimeout != 120 {
 		t.Errorf("partial codex override dropped idle_timeout: %d", codex.IdleTimeout)
 	}
+	if !codex.FullScreen {
+		t.Error("partial codex override dropped full_screen")
+	}
 }
 
 func TestLoadCodexDefaultsCanBeExplicitlyDisabled(t *testing.T) {
 	path := writeConfig(t, `
 [harness.codex]
 prompt_positional = false
+full_screen = false
 idle_timeout = 0
 `)
 	cfg, err := config.Load(path)
@@ -149,6 +156,9 @@ idle_timeout = 0
 	}
 	if codex.IdleTimeout != 0 {
 		t.Errorf("codex idle_timeout = %d, want explicit zero override", codex.IdleTimeout)
+	}
+	if codex.FullScreen {
+		t.Error("codex full_screen = true, want explicit false override")
 	}
 	if codex.Adapter != config.AdapterGeneric || codex.Command != "codex" {
 		t.Errorf("codex default identity = %+v, want generic codex", codex)
@@ -165,6 +175,7 @@ func TestLoadCodexGenericExample(t *testing.T) {
 [harness.codex]
 adapter           = "generic"
 command           = "codex"
+full_screen       = true
 prompt_positional = true
 resume_args       = ["resume", "--last"]
 idle_timeout      = 120
@@ -188,6 +199,9 @@ idle_timeout      = 120
 	}
 	if codex.IdleTimeout != 120 {
 		t.Errorf("codex idle_timeout = %d, want 120", codex.IdleTimeout)
+	}
+	if !codex.FullScreen {
+		t.Error("codex full_screen = false, want true")
 	}
 }
 
