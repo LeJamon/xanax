@@ -206,23 +206,40 @@ func (m model) View() string {
 	if m.width == 0 {
 		return "loading…"
 	}
-	top := m.header() + "\n\n" + m.renderList()
+	fit := lipgloss.NewStyle().MaxWidth(m.width)
+	header := fit.Render(m.header())
+	bottom := m.inputBlock() + "\n" + m.footer()
+	bottom = fit.Render(bottom)
+	preview := ""
 	if p := m.renderPreview(); p != "" {
-		top += "\n" + p
+		preview = fit.Render(p)
+	}
+
+	listRows := m.listRowsAvailable(header, bottom, preview)
+	top := header + "\n\n" + m.renderList(listRows)
+	if preview != "" {
+		top += "\n" + preview
 	}
 	// Clamp every line to the terminal width so nothing soft-wraps.
-	fit := lipgloss.NewStyle().MaxWidth(m.width)
 	top = fit.Render(top)
 
 	if modal := m.centeredModal(); modal != "" {
 		return m.renderCenteredModal(top, modal)
 	}
 
-	bottom := m.inputBlock() + "\n" + m.footer()
-	bottom = fit.Render(bottom)
-
 	gap := max(1, m.height-lipgloss.Height(top)-lipgloss.Height(bottom)+1)
 	return top + strings.Repeat("\n", gap) + bottom
+}
+
+func (m model) listRowsAvailable(header, bottom, preview string) int {
+	if m.height <= 0 {
+		return len(m.sessions)*3 + 8
+	}
+	previewRows := 0
+	if preview != "" {
+		previewRows = 1 + lipgloss.Height(preview)
+	}
+	return max(1, m.height-lipgloss.Height(header)-2-previewRows-lipgloss.Height(bottom)-1)
 }
 
 // centeredModal returns the modal that floats over the dashboard — the harness
@@ -359,28 +376,188 @@ func (m model) counts() string {
 	return out
 }
 
-func (m model) renderList() string {
+type listBlock struct {
+	lines        []string
+	sessionIndex int
+}
+
+func (m model) renderList(maxRows int) string {
 	if len(m.sessions) == 0 {
 		return mutedStyle.Render("No sessions yet — type a prompt below and press enter.")
 	}
+	if maxRows <= 0 {
+		return listOverflowLine(len(m.sessions), "hidden")
+	}
 
-	var b strings.Builder
+	blocks := m.listBlocks()
+	if blocksHeight(blocks) <= maxRows {
+		return joinBlocks(blocks)
+	}
+
+	anchor := -1
+	if !m.onComposer {
+		anchor = blockForSession(blocks, m.cursor)
+	}
+	start, end := chooseListWindow(blocks, anchor, maxRows)
+	topHidden := hiddenSessions(blocks[:start])
+	bottomHidden := hiddenSessions(blocks[end:])
+
+	contentRows := maxRows
+	if topHidden > 0 {
+		contentRows--
+	}
+	if bottomHidden > 0 {
+		contentRows--
+	}
+	if contentRows <= 0 {
+		return listOverflowLine(len(m.sessions), "hidden")
+	}
+
+	start, end = chooseListWindow(blocks, anchor, contentRows)
+	topHidden = hiddenSessions(blocks[:start])
+	bottomHidden = hiddenSessions(blocks[end:])
+
+	var lines []string
+	if topHidden > 0 {
+		lines = append(lines, listOverflowLine(topHidden, "above"))
+	}
+	for _, b := range blocks[start:end] {
+		lines = append(lines, b.lines...)
+	}
+	if bottomHidden > 0 {
+		lines = append(lines, listOverflowLine(bottomHidden, "below"))
+	}
+	if len(lines) > maxRows {
+		lines = lines[:maxRows]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) listBlocks() []listBlock {
+	var blocks []listBlock
 	lastRank := -1
 	for i, s := range m.sessions {
 		if r := groupRank(s.Status); r != lastRank {
 			if lastRank != -1 {
-				b.WriteString("\n")
+				blocks = append(blocks, listBlock{lines: []string{""}, sessionIndex: -1})
 			}
 			hdr := groupStyle.Foreground(statusColor(s.Status)).Render(
 				fmt.Sprintf("▍ %s", groupLabel(r)))
-			b.WriteString(hdr)
-			b.WriteByte('\n')
+			blocks = append(blocks, listBlock{lines: []string{hdr}, sessionIndex: -1})
 			lastRank = r
 		}
-		b.WriteString(m.renderRow(s, !m.onComposer && i == m.cursor))
-		b.WriteString("\n")
+		blocks = append(blocks, listBlock{
+			lines:        strings.Split(m.renderRow(s, !m.onComposer && i == m.cursor), "\n"),
+			sessionIndex: i,
+		})
 	}
-	return b.String()
+	return blocks
+}
+
+func chooseListWindow(blocks []listBlock, anchor, maxRows int) (int, int) {
+	if len(blocks) == 0 || maxRows <= 0 {
+		return 0, 0
+	}
+	if anchor < 0 {
+		rows, end := 0, 0
+		for end < len(blocks) && rows+len(blocks[end].lines) <= maxRows {
+			rows += len(blocks[end].lines)
+			end++
+		}
+		return 0, max(1, end)
+	}
+
+	start, end := anchor, anchor+1
+	rows := len(blocks[anchor].lines)
+	preferAbove := true
+	for rows < maxRows && (start > 0 || end < len(blocks)) {
+		added := false
+		if preferAbove {
+			added = extendListWindowAbove(blocks, &start, &rows, maxRows)
+			if !added {
+				added = extendListWindowBelow(blocks, &end, &rows, maxRows)
+			}
+		} else {
+			added = extendListWindowBelow(blocks, &end, &rows, maxRows)
+			if !added {
+				added = extendListWindowAbove(blocks, &start, &rows, maxRows)
+			}
+		}
+		if !added {
+			break
+		}
+		preferAbove = !preferAbove
+	}
+	return start, end
+}
+
+func extendListWindowAbove(blocks []listBlock, start, rows *int, maxRows int) bool {
+	if *start == 0 {
+		return false
+	}
+	h := len(blocks[*start-1].lines)
+	if *rows+h > maxRows {
+		return false
+	}
+	*start = *start - 1
+	*rows += h
+	return true
+}
+
+func extendListWindowBelow(blocks []listBlock, end, rows *int, maxRows int) bool {
+	if *end >= len(blocks) {
+		return false
+	}
+	h := len(blocks[*end].lines)
+	if *rows+h > maxRows {
+		return false
+	}
+	*end = *end + 1
+	*rows += h
+	return true
+}
+
+func blockForSession(blocks []listBlock, sessionIndex int) int {
+	for i, b := range blocks {
+		if b.sessionIndex == sessionIndex {
+			return i
+		}
+	}
+	return -1
+}
+
+func blocksHeight(blocks []listBlock) int {
+	rows := 0
+	for _, b := range blocks {
+		rows += len(b.lines)
+	}
+	return rows
+}
+
+func hiddenSessions(blocks []listBlock) int {
+	n := 0
+	for _, b := range blocks {
+		if b.sessionIndex >= 0 {
+			n++
+		}
+	}
+	return n
+}
+
+func joinBlocks(blocks []listBlock) string {
+	var lines []string
+	for _, b := range blocks {
+		lines = append(lines, b.lines...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func listOverflowLine(n int, where string) string {
+	label := "sessions"
+	if n == 1 {
+		label = "session"
+	}
+	return mutedStyle.Render(fmt.Sprintf("… %d more %s %s", n, label, where))
 }
 
 func (m model) renderRow(s *session.Session, selected bool) string {
