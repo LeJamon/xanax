@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,11 +24,19 @@ func newNewCmd() *cobra.Command {
 		noAttach bool
 	)
 	cmd := &cobra.Command{
-		Use:   `new [flags] "prompt"`,
+		Use:   `new [flags] [prompt ...]`,
 		Short: "Launch a new agent session",
-		Args:  cobra.ExactArgs(1),
+		Long: `Launch a new agent session.
+
+With no prompt, xanax starts a fresh interactive harness. Multiple prompt
+arguments are joined with spaces. Use "-" as the only prompt argument to read
+the prompt from stdin.`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			prompt := args[0]
+			prompt, err := promptFromNewArgs(cmd, args)
+			if err != nil {
+				return err
+			}
 			e, err := loadEnv()
 			if err != nil {
 				return err
@@ -105,6 +115,26 @@ func newNewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&title, "title", "", "session title (default: derived from prompt)")
 	cmd.Flags().BoolVar(&noAttach, "no-attach", false, "do not attach after launching")
 	return cmd
+}
+
+func promptFromNewArgs(cmd *cobra.Command, args []string) (string, error) {
+	switch {
+	case len(args) == 0:
+		return "", nil
+	case len(args) == 1 && args[0] == "-":
+		data, err := io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return "", fmt.Errorf("read prompt from stdin: %w", err)
+		}
+		return trimFinalLineBreak(string(data)), nil
+	default:
+		return strings.Join(args, " "), nil
+	}
+}
+
+func trimFinalLineBreak(s string) string {
+	s = strings.TrimSuffix(s, "\n")
+	return strings.TrimSuffix(s, "\r")
 }
 
 // runAttach connects to a live session and proxies the terminal.

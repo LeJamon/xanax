@@ -83,8 +83,10 @@ rvr (CLI / dashboard TUI)          — foreground, short- or long-lived
 ```
 
 - `rvr new` inserts the session row, then spawns `rvr _supervise <id>` detached
-  (setsid, stdio → per-session log file) and returns. Optionally attaches immediately
-  (`--attach`, default true when stdout is a TTY).
+  (setsid, stdio → per-session log file) and returns. Prompt words are joined
+  with spaces, a single `-` reads the prompt from stdin, and no prompt starts a
+  fresh interactive harness. Optionally attaches immediately (`--attach`, default
+  true when stdout is a TTY).
 - The **supervisor** owns: the PTY, an in-memory output ring buffer, the raw output
   log, the state side channel, a unix control socket, and all SQLite writes for its
   session. It outlives the UI; sessions keep running when the dashboard exits.
@@ -401,7 +403,7 @@ Defaults for opencode, pi, and codex are built in; the file is optional.
 
 ```
 rvr                       # dashboard (default command)
-rvr new [flags] "prompt"  # --harness, --repo (default "."), --title, --attach/--no-attach
+rvr new [flags] [prompt ...] # --harness, --repo (default "."), --title, --attach/--no-attach
 rvr list [--json]         # aliases: ls, ps
 rvr attach <id-or-prefix>
 rvr resume <id-or-prefix> # reattach if alive, else native-resume relaunch (D3)

@@ -30,8 +30,9 @@ Runs on macOS and Linux.
 ```sh
 rvr                                    # dashboard: all sessions
 rvr ~/code/api                         # dashboard scoped to one path
-rvr new --harness opencode "fix the failing tests"
+rvr new --harness opencode fix the failing tests
 rvr new --harness pi --repo ~/code/api "add pagination"
+printf '%s\n' "long prompt" | rvr new -
 rvr list [--json]                      # aliases: ls, ps
 rvr attach <id>                        # reattach to a live session
 rvr resume <id>                        # reattach, or relaunch a dead one natively
