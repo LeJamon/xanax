@@ -233,7 +233,7 @@ func DefaultKeys() KeyMap {
 		Quit:    Binding{"ctrl+c"},
 
 		Open:     Binding{"enter", "right", "o"},
-		Remove:   Binding{"ctrl+k"},
+		Remove:   Binding{"ctrl+x"},
 		Resume:   Binding{"r", "ctrl+r"},
 		Rename:   Binding{"e"},
 		Preview:  Binding{"space"},
