@@ -120,6 +120,10 @@ func failureDetail(st *store.Store, sess *session.Session) string {
 	return ""
 }
 
+func missingHarnessDetail(name string) string {
+	return fmt.Sprintf("harness %q is not configured (see rvr config)", name)
+}
+
 // spawnSupervisor starts a detached `rvr _supervise <id>` process that
 // outlives this one (SPEC.md §3). It returns the supervisor pid.
 func (e *env) spawnSupervisor(id string, resume bool) (int, error) {

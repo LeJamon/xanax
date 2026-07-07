@@ -73,11 +73,11 @@ type Config struct {
 // dashboard's open-session action, so a terminal session (e.g. completed) that
 // resume can revive is never wrongly reported as unopenable.
 func (c *Config) CanResume(sess *session.Session) bool {
-	if sess.HarnessSessionRef != "" {
-		return true
-	}
 	h, ok := c.Harnesses[sess.Harness]
-	return ok && len(h.ResumeArgs) > 0
+	if !ok {
+		return false
+	}
+	return sess.HarnessSessionRef != "" || len(h.ResumeArgs) > 0
 }
 
 // Theme colors the dashboard TUI. Each value is an ANSI palette index ("0"–
