@@ -423,6 +423,7 @@ The sessions and the **prompt box** form one navigable column; the prompt box is
 last row. `↑`/`↓` move the selection. `k`/`j` are vim-style aliases while a
 session row is selected, and type normally in the prompt box. The selected row is
 framed with full-width top and bottom rules (no left/right sides) in the
+navigation accent color; the prompt box shows the same rules in grey when it is not the selected row.
 navigation accent color; the prompt box shows the same rules in grey when it is
 not the selected row.
 

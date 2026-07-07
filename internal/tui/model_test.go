@@ -162,6 +162,18 @@ func TestVimNavigationKeysMoveSelection(t *testing.T) {
 	}
 }
 
+func TestComposerAcceptsVimNavigationLetters(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m = send(m, "j")
+	m = send(m, "k")
+	if !m.onComposer {
+		t.Fatal("j/k typed in the composer should not move selection to a session")
+	}
+	if m.composer.Value() != "jk" {
+		t.Errorf("composer = %q, want jk", m.composer.Value())
+	}
+}
+
 func TestComposerAcceptsTextOnlyWhenSelected(t *testing.T) {
 	// Selected: typing lands in the composer.
 	m := newTestModel(sampleSessions())
@@ -597,6 +609,19 @@ func TestPickerArrowsNavigateWhileSearching(t *testing.T) {
 	m = send(m, "enter")
 	if m.harness() != "codex" {
 		t.Errorf("selected harness = %q, want codex", m.harness())
+	}
+}
+
+func TestPickerSearchAcceptsVimNavigationLetters(t *testing.T) {
+	m := newTestModel(nil)
+	m = send(m, "tab")
+	m = send(m, "j")
+	m = send(m, "k")
+	if !m.searchFocused {
+		t.Fatal("picker search should stay focused")
+	}
+	if m.search != "jk" {
+		t.Errorf("search = %q, want jk", m.search)
 	}
 }
 
@@ -1219,6 +1244,19 @@ func TestSettingsKeyOpensEditor(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "Keybindings") {
 		t.Error("settings modal did not render its Keybindings panel")
+	}
+}
+
+func TestSettingsSearchAcceptsVimNavigationLetters(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	m = send(m, "s")
+	m = send(m, "j")
+	m = send(m, "k")
+	if !m.settingsOn {
+		t.Fatal("settings editor closed unexpectedly")
+	}
+	if m.settingsSearch != "jk" {
+		t.Errorf("settingsSearch = %q, want jk", m.settingsSearch)
 	}
 }
 
