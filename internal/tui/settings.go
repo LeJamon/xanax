@@ -60,10 +60,10 @@ func (m model) updateSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	k := m.keys()
 	switch {
-	case keyMatches(k.Up, msg):
+	case keyMatches(k.Up, msg) && !textInputKey(msg):
 		m.moveSettings(-1)
 		return m, nil
-	case keyMatches(k.Down, msg):
+	case keyMatches(k.Down, msg) && !textInputKey(msg):
 		m.moveSettings(1)
 		return m, nil
 	case keyMatches(k.Confirm, msg):

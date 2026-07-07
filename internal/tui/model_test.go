@@ -595,6 +595,19 @@ func TestPickerArrowsNavigateWhileSearching(t *testing.T) {
 	}
 }
 
+func TestPickerSearchAcceptsVimNavigationLetters(t *testing.T) {
+	m := newTestModel(nil)
+	m = send(m, "tab")
+	m = send(m, "j")
+	m = send(m, "k")
+	if !m.searchFocused {
+		t.Fatal("picker search should stay focused")
+	}
+	if m.search != "jk" {
+		t.Errorf("search = %q, want jk", m.search)
+	}
+}
+
 // TestPickerDefaultKey ensures pressing 'd' on the action row while a harness is
 // highlighted sets it as the default in the config.
 func TestPickerDefaultKey(t *testing.T) {
@@ -1155,6 +1168,19 @@ func TestSettingsKeyOpensEditor(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "Keybindings") {
 		t.Error("settings modal did not render its Keybindings panel")
+	}
+}
+
+func TestSettingsSearchAcceptsVimNavigationLetters(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	m = send(m, "s")
+	m = send(m, "j")
+	m = send(m, "k")
+	if !m.settingsOn {
+		t.Fatal("settings editor closed unexpectedly")
+	}
+	if m.settingsSearch != "jk" {
+		t.Errorf("settingsSearch = %q, want jk", m.settingsSearch)
 	}
 }
 

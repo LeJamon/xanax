@@ -427,9 +427,9 @@ func (m model) dispatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.onComposer {
 		switch {
-		case keyMatches(m.keys().Up, msg) && !composerTextKey(msg):
+		case keyMatches(m.keys().Up, msg) && !textInputKey(msg):
 			return m.moveUp()
-		case keyMatches(m.keys().Down, msg) && !composerTextKey(msg):
+		case keyMatches(m.keys().Down, msg) && !textInputKey(msg):
 			return m.moveDown()
 		}
 		return m.updateComposerKey(msg)
@@ -443,7 +443,7 @@ func (m model) dispatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.updateSessionKey(msg)
 }
 
-func composerTextKey(msg tea.KeyMsg) bool {
+func textInputKey(msg tea.KeyMsg) bool {
 	return msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace
 }
 
@@ -576,12 +576,13 @@ func (m model) updatePickKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startAddHarness()
 	}
 	// Navigation, selection and cancel behave the same whether or not the search
-	// box holds focus, so the arrows move the list even while filtering.
+	// box holds focus, but printable navigation aliases stay available as search
+	// text while the search box is active.
 	switch {
-	case keyMatches(k.Up, msg):
+	case keyMatches(k.Up, msg) && (!m.searchFocused || !textInputKey(msg)):
 		m.movePick(-1)
 		return m, nil
-	case keyMatches(k.Down, msg):
+	case keyMatches(k.Down, msg) && (!m.searchFocused || !textInputKey(msg)):
 		m.movePick(1)
 		return m, nil
 	case keyMatches(k.Confirm, msg):

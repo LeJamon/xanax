@@ -414,9 +414,10 @@ Two layers, both driven by the arrow keys. `←` always means "back / up one lev
 - Each row: status glyph, title, harness, repo name, relative age, and (for waiting
   sessions) the status detail.
 The sessions and the **prompt box** form one navigable column; the prompt box is the
-last row. `↑`/`↓` and `k`/`j` always move the selection. The selected row is framed
-with full-width top and bottom rules (no left/right sides) in the navigation accent
-color; the prompt box shows the same rules in grey when it is not the selected row.
+last row. `↑`/`↓` move the selection. `k`/`j` are vim-style aliases while a
+session row is selected, and type normally in the prompt box. The selected row is
+framed with full-width top and bottom rules (no left/right sides) in the
+navigation accent color; the prompt box shows the same rules in grey when it is not the selected row.
 
 - **Prompt box selected:** typed/pasted text goes into it; **Enter** launches a new
   session in the selected harness (current repo, no attach, so you can fire off
