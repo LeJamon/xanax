@@ -58,6 +58,8 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyTab}
 	case "ctrl+o":
 		return tea.KeyMsg{Type: tea.KeyCtrlO}
+	case "ctrl+x":
+		return tea.KeyMsg{Type: tea.KeyCtrlX}
 	case "ctrl+k":
 		return tea.KeyMsg{Type: tea.KeyCtrlK}
 	case "ctrl+c":
@@ -204,7 +206,7 @@ func TestComposerEnterLaunchesAndClears(t *testing.T) {
 	}
 }
 
-func TestCtrlKRemovesTerminalSession(t *testing.T) {
+func TestCtrlXRemovesTerminalSession(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -219,13 +221,13 @@ func TestCtrlKRemovesTerminalSession(t *testing.T) {
 	m.deps.Store = st
 	m.deps.SocketDir = t.TempDir()
 
-	_, cmd := m.Update(key("ctrl+k"))
+	_, cmd := m.Update(key("ctrl+x"))
 	if cmd == nil {
-		t.Fatal("ctrl+k on a terminal selected session returned no command")
+		t.Fatal("ctrl+x on a terminal selected session returned no command")
 	}
 	cmd()
 	if _, err := st.GetSession("todelete01"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("ctrl+k did not remove the session: %v", err)
+		t.Errorf("ctrl+x did not remove the session: %v", err)
 	}
 }
 
@@ -244,7 +246,7 @@ func TestLiveRemoveRequiresConfirmation(t *testing.T) {
 	m.deps.Store = st
 	m.deps.SocketDir = t.TempDir()
 
-	next, cmd := m.Update(key("ctrl+k"))
+	next, cmd := m.Update(key("ctrl+x"))
 	m = next.(model)
 	if cmd != nil {
 		t.Fatal("first remove press on a live session should only arm confirmation")
@@ -259,7 +261,7 @@ func TestLiveRemoveRequiresConfirmation(t *testing.T) {
 		t.Errorf("footer did not show remove confirmation: %q", foot)
 	}
 
-	next, cmd = m.Update(key("ctrl+k"))
+	next, cmd = m.Update(key("ctrl+x"))
 	m = next.(model)
 	if cmd == nil {
 		t.Fatal("second remove press on the same live session returned no command")
@@ -277,7 +279,7 @@ func TestRemoveConfirmationDisarmsOnOtherKey(t *testing.T) {
 	sess := &session.Session{ID: "live0002", Title: "running", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning}
 	m := selectSession(newTestModel([]*session.Session{sess}), 0)
 
-	next, cmd := m.Update(key("ctrl+k"))
+	next, cmd := m.Update(key("ctrl+x"))
 	m = next.(model)
 	if cmd != nil || m.confirmRemoveID != "live0002" {
 		t.Fatalf("first remove did not arm confirmation: cmd=%v id=%q", cmd, m.confirmRemoveID)
@@ -307,9 +309,9 @@ func TestKillFailureDoesNotDeleteSession(t *testing.T) {
 	m.attachAliveFn = func(string) bool { return true }
 	m.attachKillFn = func(string) error { return errors.New("socket closed") }
 
-	next, _ := m.Update(key("ctrl+k"))
+	next, _ := m.Update(key("ctrl+x"))
 	m = next.(model)
-	next, cmd := m.Update(key("ctrl+k"))
+	next, cmd := m.Update(key("ctrl+x"))
 	m = next.(model)
 	if cmd == nil {
 		t.Fatal("confirmed live remove returned no command")
@@ -1190,7 +1192,7 @@ func TestSpaceTypesIntoComposer(t *testing.T) {
 }
 
 // TestRebindingSessionAction proves a config remap changes which key acts: after
-// rebinding remove from Ctrl+K to 'x', 'x' removes the session and Ctrl+K is inert.
+// rebinding remove from Ctrl+X to 'x', 'x' removes the session and Ctrl+X is inert.
 func TestRebindingSessionAction(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
 	if err != nil {
@@ -1204,11 +1206,11 @@ func TestRebindingSessionAction(t *testing.T) {
 	m := selectSession(newTestModel([]*session.Session{sess}), 0)
 	m.deps.Store = st
 	m.deps.SocketDir = t.TempDir()
-	m.deps.Cfg.Keys.Remove = config.Binding{"x"} // rebind ctrl+k -> x
+	m.deps.Cfg.Keys.Remove = config.Binding{"x"} // rebind ctrl+x -> x
 
 	// The old key no longer acts.
-	if _, cmd := m.Update(key("ctrl+k")); cmd != nil {
-		t.Fatal("ctrl+k still acted after remove was rebound to 'x'")
+	if _, cmd := m.Update(key("ctrl+x")); cmd != nil {
+		t.Fatal("ctrl+x still acted after remove was rebound to 'x'")
 	}
 	if _, err := st.GetSession("rebind0001"); err != nil {
 		t.Fatalf("old remove key deleted the session: %v", err)
