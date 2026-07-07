@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"xanax/internal/session"
 	"xanax/internal/supervisor"
 )
 
@@ -34,7 +36,15 @@ func newSuperviseCmd() *cobra.Command {
 			}
 			harness, ok := e.cfg.Harnesses[sess.Harness]
 			if !ok {
-				return err
+				detail := missingHarnessDetail(sess.Harness)
+				if err := st.SetStatus(sess.ID, session.StatusFailed, detail); err != nil {
+					return err
+				}
+				st.RecordEvent(sess.ID, "error", map[string]any{"message": detail})
+				if err := st.Finish(sess.ID, session.StatusFailed, 1); err != nil {
+					return err
+				}
+				return errors.New(detail)
 			}
 
 			// stderr is redirected to the supervisor log file by the parent.

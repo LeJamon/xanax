@@ -24,6 +24,10 @@ func (e *env) canResume(sess *session.Session) bool {
 	return e.cfg.CanResume(sess)
 }
 
+func missingHarnessDetail(name string) string {
+	return fmt.Sprintf("harness %q is not configured (see xanax config)", name)
+}
+
 // spawnSupervisor starts a detached `xanax _supervise <id>` process that
 // outlives this one (SPEC.md §3). It returns the supervisor pid.
 func (e *env) spawnSupervisor(id string, resume bool) (int, error) {

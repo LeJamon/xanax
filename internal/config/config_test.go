@@ -412,11 +412,12 @@ func TestCanResume(t *testing.T) {
 		sess *session.Session
 		want bool
 	}{
-		{"captured ref always resumable", &session.Session{Harness: "opencode", HarnessSessionRef: "ses_1"}, true},
+		{"captured ref for configured harness", &session.Session{Harness: "opencode", HarnessSessionRef: "ses_1"}, true},
 		{"completed generic with resume_args, no ref", &session.Session{Harness: "codex", Status: session.StatusCompleted}, true},
 		{"generic without resume_args", &session.Session{Harness: "aider"}, false},
 		{"native without ref", &session.Session{Harness: "opencode"}, false},
 		{"unknown harness", &session.Session{Harness: "gone"}, false},
+		{"captured ref for unknown harness", &session.Session{Harness: "gone", HarnessSessionRef: "ses_1"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
