@@ -34,7 +34,7 @@ func canonKey(s string) string {
 	if s == " " {
 		return "space"
 	}
-	return strings.TrimSpace(s)
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
 // keyHint renders a compact label for a binding's primary (first) key, for the
