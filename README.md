@@ -46,8 +46,9 @@ Session IDs accept unique prefixes (git-style).
 
 ### Navigation
 
-The sessions and the prompt box form one column. `↑`/`↓` (or `k`/`j`) always move
-the selection; the selected row is framed with accent-colored top/bottom rules.
+The sessions and the prompt box form one column. `↑`/`↓` move the selection;
+`k`/`j` are vim-style aliases while a session is selected, and type normally in
+the prompt box. The selected row is framed with accent-colored top/bottom rules.
 
 - **Prompt box selected** (bottom row): type/paste a prompt and press **Enter** to
   launch a new session in the background (fire off several), or **Ctrl+O** to launch
@@ -62,9 +63,9 @@ the selection; the selected row is framed with accent-colored top/bottom rules.
   selection moves; each row shows its live git branch (and open PR number, via
   `gh`) on the right.
 - **Session window:** opening a session drops you into the harness's own live TUI (the
-  conversation). Press **`ctrl+\`** to detach — the session keeps running in the
-  background; **Right arrow** from the list opens it. Every harness key, including
-  arrows, is forwarded while attached.
+  conversation). Press **Left arrow** (or `ctrl+\`) to detach — the session keeps
+  running in the background; **Right arrow** from the list opens it. (Left/right are
+  intercepted by xanax as back/into, so they aren't sent to the harness.)
 
 Sessions survive closing the dashboard and even a reboot: on the next launch, xanax
 auto-resumes interrupted sessions via the harness's native resume (like Claude

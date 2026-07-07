@@ -7,6 +7,7 @@
 package attach
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -237,12 +238,15 @@ func watchWinch(conn net.Conn, out *os.File) func() {
 }
 
 // findDetach returns the offset and length of the earliest detach trigger in
-// data — the configured exit key — or (-1, 0) if none is present.
+// data — the configured exit key or an unmodified Left-arrow key press — or
+// (-1, 0) if none is present. Left returns the user to the dashboard.
 //
-// The trigger is recognized in the raw control-byte form and, when a harness
-// pushes the Kitty keyboard protocol (CSI > u), in the CSI-u form. For example,
-// ctrl+\ may arrive as ESC[92;5u rather than the raw 0x1c byte, so a raw-byte
-// scan alone would miss it.
+// Both triggers are recognized in every encoding a harness may negotiate
+// through the passthrough. Once a harness (codex) pushes the Kitty keyboard
+// protocol (CSI > u), the terminal re-encodes the Left arrow as a parameterized
+// CSI and a control chord like the exit key ctrl+\ as a CSI-u sequence
+// (ESC[92;5u) rather than the raw 0x1c byte, so a raw-byte scan alone would miss
+// both.
 //
 // The scan is left-to-right so the caller can forward the bytes preceding the
 // trigger before detaching.
@@ -254,8 +258,116 @@ func findDetach(data []byte, exitKey byte) (idx, length int) {
 		if n := exitKeyDetachLen(data[i:], exitKey); n > 0 {
 			return i, n
 		}
+		if n := leftArrowDetachLen(data[i:]); n > 0 {
+			return i, n
+		}
 	}
 	return -1, 0
+}
+
+// leftArrowDetachLen reports the length of an *unmodified* Left-arrow key press
+// at the start of data, or 0 if data does not begin with one.
+//
+// The Left arrow reaches the client in several encodings depending on the
+// terminal mode the harness negotiated through the passthrough:
+//
+//	ESC O D                  SS3 / application-cursor-keys mode (DECCKM)
+//	ESC [ D                  legacy CSI
+//	ESC [ 1 D                Kitty form with the key code and no modifier
+//	ESC [ 1 ; <m>[:<e>] D    Kitty keyboard protocol — harnesses like codex push
+//	                         it (CSI > u); <m> is 1+modifier bitmask, <e> the
+//	                         press(1)/repeat(2)/release(3) event.
+//
+// Only an unmodified press detaches. Left with a modifier (Ctrl/Alt/Shift) is
+// passed through for word navigation and selection, and repeat/release events
+// are ignored — otherwise a modifier released a beat before Left (which reports
+// the Left release with no modifiers) would eject the user mid-edit. The key
+// code, when present, must be the arrow's own code 1; an ANSI cursor-motion
+// sequence such as ESC[5D (cursor-back-5, common in pasted output) shares the
+// final 'D' but is not the Left key.
+//
+// A sequence still being assembled across a read boundary (no final byte yet)
+// returns 0; the partial prefix is then forwarded to the harness and the detach
+// is missed — an accepted limitation, as with the legacy 3-byte forms.
+func leftArrowDetachLen(data []byte) int {
+	if len(data) < 3 || data[0] != 0x1b {
+		return 0
+	}
+	switch data[1] {
+	case 'O': // SS3: ESC O D
+		if data[2] == 'D' {
+			return 3
+		}
+		return 0
+	case '[': // CSI: ESC [ <params> D, params in [0-9;:]
+		i := 2
+		for i < len(data) && isCSIParam(data[i]) {
+			i++
+		}
+		if i >= len(data) || data[i] != 'D' {
+			return 0 // wrong final byte, or partial sequence
+		}
+		if !leftArrowUnmodifiedPress(data[2:i]) {
+			return 0
+		}
+		return i + 1
+	default:
+		return 0
+	}
+}
+
+func isCSIParam(b byte) bool {
+	return (b >= '0' && b <= '9') || b == ';' || b == ':'
+}
+
+// leftArrowUnmodifiedPress reports whether a CSI cursor-key parameter list (the
+// bytes between "ESC [" and the final "D") denotes the Left arrow with no
+// modifiers held, on a key-press event.
+//
+// The list holds up to two ';'-separated fields — the key code and the modifier:
+//   - Key code: the leading field, before any ':' alternate-key subfields. Empty
+//     (legacy "ESC [ D") or "1" is the Left arrow; any other code is a different
+//     key and never detaches.
+//   - Modifier: the second field, before any ':' event subfield. It is
+//     1+bitmask, so no modifier (ignoring lock states) means an empty field or 1.
+//     The event subfield is press(1)/repeat(2)/release(3), defaulting to press;
+//     only a press detaches.
+func leftArrowUnmodifiedPress(params []byte) bool {
+	keyField, modField, hasMod := bytes.Cut(params, []byte{';'})
+
+	keyCode, _, _ := bytes.Cut(keyField, []byte{':'})
+	if len(keyCode) != 0 && string(keyCode) != "1" {
+		return false
+	}
+	if !hasMod {
+		return true
+	}
+
+	// A trailing text field (ESC [ code ; mod ; text) never accompanies an
+	// arrow; keep only the modifier field.
+	modField, _, _ = bytes.Cut(modField, []byte{';'})
+	mod, event, _ := bytes.Cut(modField, []byte{':'})
+	if !modifiersClear(mod) {
+		return false // a modifier is held -> pass through
+	}
+	return len(event) == 0 || string(event) == "1" // press only
+}
+
+// modifiersClear reports whether a Kitty modifier field (the value 1+bitmask, an
+// empty field meaning none) carries no active modifier once lock states are
+// ignored. Shift, Alt, Ctrl, Super, Hyper and Meta block a Left detach; the
+// caps_lock (64) and num_lock (128) bits do not, so a plain Left still detaches
+// with Num Lock on (which the terminal reports as ESC[1;129D).
+func modifiersClear(mod []byte) bool {
+	if len(mod) == 0 {
+		return true
+	}
+	n, _, ok := parseCSIInt(mod, 0)
+	if !ok || n < 1 {
+		return false
+	}
+	const lockBits = 0b11000000 // caps_lock (64) | num_lock (128)
+	return (n-1)&^lockBits == 0
 }
 
 // exitKeyDetachLen reports the length of a Kitty keyboard-protocol CSI-u

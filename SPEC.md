@@ -152,11 +152,17 @@ Unix socket server ──► attach / input / resize / subscribe / kill / info
     harness starts before any client attaches, the supervisor answers these itself
     while no client is connected; once a client attaches, its real terminal answers and
     the supervisor stays quiet (no double replies).
-- **Detach trigger.** The attach client detaches on `ctrl+\` (configurable
-  `interact_exit_key`). The trigger is recognized in the raw control-byte form and,
-  under the Kitty disambiguate flag, its `CSI u` form (`ctrl+\` → `ESC[92;5u`). Every
-  other key, including arrows, Escape, and pasted terminal control sequences, is
-  forwarded to the harness.
+- **Detach triggers.** The attach client detaches on `ctrl+\` (configurable
+  `interact_exit_key`) **or the Left arrow** — Left returns you to the dashboard and is
+  therefore not forwarded to the harness. Both triggers are recognized in every
+  encoding a harness may negotiate through the passthrough. The Left arrow: legacy
+  `ESC[D`, application cursor `ESCOD`, and the Kitty keyboard protocol's parameterized
+  forms (`ESC[1D`, `ESC[1;1D`) that harnesses like codex push (`CSI > u`). The exit key:
+  the raw control byte and, under the Kitty disambiguate flag, its `CSI u` form (`ctrl+\`
+  → `ESC[92;5u`). Only an *unmodified key press* detaches: `Ctrl`/`Alt`/`Shift`+Left pass
+  through for word navigation and selection, and repeat/release events are ignored so a
+  modifier released just before Left (reported as an unmodified Left release) does not
+  eject you mid-edit.
 
 ## 5. Adapter architecture
 
@@ -414,9 +420,11 @@ Two layers, both driven by the arrow keys. `←` always means "back / up one lev
 - Each row: status glyph, title, harness, repo name, relative age, and (for waiting
   sessions) the status detail.
 The sessions and the **prompt box** form one navigable column; the prompt box is the
-last row. `↑`/`↓` and `k`/`j` always move the selection. The selected row is framed
-with full-width top and bottom rules (no left/right sides) in the navigation accent
-color; the prompt box shows the same rules in grey when it is not the selected row.
+last row. `↑`/`↓` move the selection. `k`/`j` are vim-style aliases while a
+session row is selected, and type normally in the prompt box. The selected row is
+framed with full-width top and bottom rules (no left/right sides) in the
+navigation accent color; the prompt box shows the same rules in grey when it is
+not the selected row.
 
 - **Prompt box selected:** typed/pasted text goes into it; **Enter** launches a new
   session in the selected harness (current repo, no attach, so you can fire off
