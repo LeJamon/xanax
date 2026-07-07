@@ -425,16 +425,26 @@ func (m model) dispatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.filtering {
 		return m.updateFilterKey(msg)
 	}
+	if m.onComposer {
+		switch {
+		case keyMatches(m.keys().Up, msg) && !composerTextKey(msg):
+			return m.moveUp()
+		case keyMatches(m.keys().Down, msg) && !composerTextKey(msg):
+			return m.moveDown()
+		}
+		return m.updateComposerKey(msg)
+	}
 	switch {
 	case keyMatches(m.keys().Up, msg):
 		return m.moveUp()
 	case keyMatches(m.keys().Down, msg):
 		return m.moveDown()
 	}
-	if m.onComposer {
-		return m.updateComposerKey(msg)
-	}
 	return m.updateSessionKey(msg)
+}
+
+func composerTextKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace
 }
 
 // moveUp/moveDown treat the prompt box as the row just below the last session

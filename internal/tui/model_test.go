@@ -145,6 +145,18 @@ func TestVimNavigationKeysMoveSelection(t *testing.T) {
 	}
 }
 
+func TestComposerAcceptsVimNavigationLetters(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m = send(m, "j")
+	m = send(m, "k")
+	if !m.onComposer {
+		t.Fatal("j/k typed in the composer should not move selection to a session")
+	}
+	if m.composer.Value() != "jk" {
+		t.Errorf("composer = %q, want jk", m.composer.Value())
+	}
+}
+
 func TestComposerAcceptsTextOnlyWhenSelected(t *testing.T) {
 	// Selected: typing lands in the composer.
 	m := newTestModel(sampleSessions())
