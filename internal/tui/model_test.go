@@ -933,6 +933,28 @@ func TestEmptyStateRenders(t *testing.T) {
 	}
 }
 
+func TestRenderRowShowsFailedDetailAndExitCode(t *testing.T) {
+	exitCode := 127
+	sess := &session.Session{
+		ID:           "faildetail1",
+		Title:        "launch failed",
+		Harness:      "opencode",
+		RepoPath:     "/x/a",
+		Status:       session.StatusFailed,
+		StatusDetail: "exec: opencode: not found",
+		ExitCode:     &exitCode,
+		CreatedAt:    time.Now(),
+	}
+	m := newTestModel([]*session.Session{sess})
+
+	row := stripANSI(m.renderRow(sess, false))
+	for _, want := range []string{"exec: opencode: not found", "exit 127"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("row %q missing %q", row, want)
+		}
+	}
+}
+
 func TestPreviewOpensOnlyWithSpace(t *testing.T) {
 	m := selectSession(newTestModel(sampleSessions()), 0)
 	if m.renderPreview() != "" {
@@ -959,6 +981,29 @@ func TestPreviewOpensOnlyWithSpace(t *testing.T) {
 	m = send(m, "space")
 	if m.previewOn || m.renderPreview() != "" {
 		t.Error("space again should close the preview")
+	}
+}
+
+func TestPreviewShowsFailedDetailWhenNoSnapshot(t *testing.T) {
+	exitCode := 1
+	sess := &session.Session{
+		ID:           "failpreview1",
+		Title:        "failed",
+		Harness:      "opencode",
+		RepoPath:     "/x/a",
+		Status:       session.StatusFailed,
+		StatusDetail: "adapter init failed",
+		ExitCode:     &exitCode,
+		CreatedAt:    time.Now(),
+	}
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.previewOn = true
+
+	preview := stripANSI(m.renderPreview())
+	for _, want := range []string{"adapter init failed", "exit 1"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("preview %q missing %q", preview, want)
+		}
 	}
 }
 

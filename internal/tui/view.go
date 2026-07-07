@@ -282,14 +282,23 @@ func (m model) inputBlock() string {
 // renderPreview shows a peek of the selected session's screen once space has
 // opened the preview and a snapshot has been fetched.
 func (m model) renderPreview() string {
-	if !m.previewOn || m.onComposer || m.previewText == "" {
+	if !m.previewOn || m.onComposer {
 		return ""
 	}
-	// previewText is only ever stored for the selected session (see the previewMsg
-	// handler), so the selected id is the preview's id.
-	id := m.selectedID()
+	s := m.current()
+	if s == nil {
+		return ""
+	}
+	bodyText := m.previewText
+	if bodyText == "" {
+		bodyText = terminalDetailText(s)
+	}
+	if bodyText == "" {
+		return ""
+	}
+	id := s.ID
 	label := mutedStyle.Render("Preview  ·  " + id[:min(8, len(id))])
-	body := lipgloss.NewStyle().Foreground(colMuted).Render(m.previewText)
+	body := lipgloss.NewStyle().Foreground(colMuted).Render(bodyText)
 	return label + "\n" + hRules(colMuted, m.width).Render(body)
 }
 
@@ -393,8 +402,8 @@ func (m model) renderRow(s *session.Session, selected bool) string {
 		s.Harness, repoName(s.RepoPath), humanAge(s.CreatedAt)))
 
 	content := fmt.Sprintf("%s %s   %s", glyph, title, meta)
-	if s.Status == session.StatusWaiting && s.StatusDetail != "" {
-		content += mutedStyle.Render("  — " + truncate(s.StatusDetail, 40))
+	if detail := rowDetailText(s); detail != "" {
+		content += mutedStyle.Render("  — " + truncate(detail, 48))
 	}
 
 	// Live git context (branch · #PR), right-aligned against the row edge.
@@ -406,6 +415,24 @@ func (m model) renderRow(s *session.Session, selected bool) string {
 	}
 	// The selected session gets full-width top+bottom rules in the accent color.
 	return hRules(colAccent, m.width).Render(content)
+}
+
+func rowDetailText(s *session.Session) string {
+	var parts []string
+	if detail := strings.TrimSpace(s.StatusDetail); detail != "" {
+		parts = append(parts, detail)
+	}
+	if (s.Status == session.StatusFailed || s.Status == session.StatusCancelled) && s.ExitCode != nil {
+		parts = append(parts, fmt.Sprintf("exit %d", *s.ExitCode))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func terminalDetailText(s *session.Session) string {
+	if s.Status != session.StatusFailed && s.Status != session.StatusCancelled {
+		return ""
+	}
+	return rowDetailText(s)
 }
 
 // gitSuffix renders " branch · #pr" for a repo, or "" when unknown.
