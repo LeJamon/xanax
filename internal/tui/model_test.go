@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -88,6 +89,22 @@ func sampleSessions() []*session.Session {
 		{ID: "wait0001", Title: "which API?", Harness: "pi", RepoPath: "/x/b", Status: session.StatusWaiting, StatusDetail: "pick one", CreatedAt: now},
 		{ID: "done0001", Title: "release notes", Harness: "opencode", RepoPath: "/x/c", Status: session.StatusCompleted, CreatedAt: now},
 	}
+}
+
+func manyRunningSessions(n int) []*session.Session {
+	now := time.Now()
+	sessions := make([]*session.Session, 0, n)
+	for i := range n {
+		sessions = append(sessions, &session.Session{
+			ID:        fmt.Sprintf("sess%04d", i),
+			Title:     fmt.Sprintf("session %02d", i),
+			Harness:   "opencode",
+			RepoPath:  "/x/many",
+			Status:    session.StatusRunning,
+			CreatedAt: now.Add(-time.Duration(i) * time.Minute),
+		})
+	}
+	return sessions
 }
 
 func TestGroupedOrdersWaitingFirst(t *testing.T) {
@@ -955,6 +972,65 @@ func TestEmptyStateRenders(t *testing.T) {
 	m := newTestModel(nil)
 	if out := m.View(); !strings.Contains(out, "No sessions") {
 		t.Errorf("empty state not shown: %q", out)
+	}
+}
+
+func TestRenderListWindowsAroundSelectedSession(t *testing.T) {
+	m := selectSession(newTestModel(manyRunningSessions(24)), 12)
+	out := stripANSI(m.renderList(9))
+	for _, want := range []string{"session 12", "more sessions above", "more sessions below"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("windowed list missing %q:\n%s", want, out)
+		}
+	}
+	for _, hidden := range []string{"session 00", "session 23"} {
+		if strings.Contains(out, hidden) {
+			t.Fatalf("windowed list rendered hidden row %q:\n%s", hidden, out)
+		}
+	}
+}
+
+func TestViewWindowsLongSessionListToTerminalHeight(t *testing.T) {
+	m := selectSession(newTestModel(manyRunningSessions(30)), 20)
+	m.width, m.height = 80, 24
+
+	out := m.View()
+	plain := stripANSI(out)
+	if h := lipgloss.Height(out); h != m.height {
+		t.Fatalf("view height = %d, want %d", h, m.height)
+	}
+	for _, want := range []string{"xanax", "session 20", "more sessions above", "more sessions below"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("long-list view missing %q:\n%s", want, plain)
+		}
+	}
+	if last := lastLine(out); !strings.Contains(last, "select") {
+		t.Fatalf("footer is not pinned to the last line: %q", last)
+	}
+}
+
+func TestViewWindowsLongSessionListWithPreview(t *testing.T) {
+	m := selectSession(newTestModel(manyRunningSessions(30)), 20)
+	m.width, m.height = 80, 24
+	m.composer.SetHeight(1)
+	m.previewOn = true
+	m.previewText = strings.Join([]string{
+		"preview line 1",
+		"preview line 2",
+		"preview line 3",
+		"preview line 4",
+		"preview line 5",
+	}, "\n")
+
+	out := m.View()
+	plain := stripANSI(out)
+	if h := lipgloss.Height(out); h != m.height {
+		t.Fatalf("view height with preview = %d, want %d", h, m.height)
+	}
+	for _, want := range []string{"session 20", "Preview", "preview line 5", "more sessions above"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("preview long-list view missing %q:\n%s", want, plain)
+		}
 	}
 }
 

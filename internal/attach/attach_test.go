@@ -119,28 +119,37 @@ func TestFindDetach(t *testing.T) {
 	}{
 		{"nothing", []byte("hello"), -1, 0},
 		{"exit key", []byte{'a', 'b', exit}, 2, 1},
-		{"left arrow CSI passes through", []byte{'x', 0x1b, '[', 'D'}, -1, 0},
-		{"left arrow SS3 passes through", []byte{0x1b, 'O', 'D'}, -1, 0},
+		{"left arrow CSI", []byte{'x', 0x1b, '[', 'D'}, 1, 3},
+		{"left arrow SS3", []byte{0x1b, 'O', 'D'}, 0, 3},
 		{"right arrow is not detach", []byte{0x1b, '[', 'C'}, -1, 0},
 		{"bare esc is not detach", []byte{0x1b}, -1, 0},
-		{"earliest wins: left arrow before exit is ignored", []byte{0x1b, '[', 'D', exit}, 3, 1},
-		{"earliest wins: exit before left arrow", []byte{exit, 0x1b, '[', 'D'}, 0, 1},
-		// Kitty keyboard protocol: harnesses like codex push CSI > u, so Left may
-		// arrive as parameterized CSI. It must still pass through to the harness.
-		{"kitty report-all-keys left passes through", []byte{0x1b, '[', '1', 'D'}, -1, 0},
-		{"kitty unmodified left passes through", []byte{0x1b, '[', '1', ';', '1', 'D'}, -1, 0},
-		{"kitty explicit left press event passes through", []byte{0x1b, '[', '1', ';', '1', ':', '1', 'D'}, -1, 0},
-		{"kitty left after text passes through", append([]byte("x"), 0x1b, '[', '1', ';', '1', 'D'), -1, 0},
-		{"kitty unmodified left release passes through", []byte{0x1b, '[', '1', ';', '1', ':', '3', 'D'}, -1, 0},
-		{"kitty unmodified left repeat passes through", []byte{0x1b, '[', '1', ';', '1', ':', '2', 'D'}, -1, 0},
-		// Cursor movement sequences in pasted terminal output must not detach.
+		{"earliest wins: arrow before exit", []byte{0x1b, '[', 'D', exit}, 0, 3},
+		{"earliest wins: exit before arrow", []byte{exit, 0x1b, '[', 'D'}, 0, 1},
+		// Kitty keyboard protocol: harnesses like codex push CSI > u, so the
+		// Left arrow arrives as a parameterized CSI. Unmodified presses detach.
+		{"kitty report-all-keys", []byte{0x1b, '[', '1', 'D'}, 0, 4},
+		{"kitty unmodified press", []byte{0x1b, '[', '1', ';', '1', 'D'}, 0, 6},
+		{"kitty explicit press event", []byte{0x1b, '[', '1', ';', '1', ':', '1', 'D'}, 0, 8},
+		{"kitty press after text", append([]byte("x"), 0x1b, '[', '1', ';', '1', 'D'), 1, 6},
+		// Repeat and release events are not presses, so they must not detach: a
+		// modifier released a beat before Left reports the Left release with no
+		// modifiers (ESC[1;1:3D), which must not eject the user mid-edit.
+		{"kitty unmodified release is not detach", []byte{0x1b, '[', '1', ';', '1', ':', '3', 'D'}, -1, 0},
+		{"kitty unmodified repeat is not detach", []byte{0x1b, '[', '1', ';', '1', ':', '2', 'D'}, -1, 0},
+		// A non-Left key code sharing the final 'D' (e.g. ANSI cursor-back-N,
+		// common in pasted terminal output) is not the Left arrow.
 		{"csi cursor-back-5 is not detach", []byte{0x1b, '[', '5', 'D'}, -1, 0},
 		{"csi cursor-back-3 is not detach", []byte{0x1b, '[', '3', 'D'}, -1, 0},
 		{"csi other keycode is not detach", []byte{0x1b, '[', '5', '7', '4', '4', '4', ';', '1', 'D'}, -1, 0},
-		{"kitty press then release coalesced passes through", []byte{0x1b, '[', '1', ';', '1', 'D', 0x1b, '[', '1', ';', '1', ':', '3', 'D'}, -1, 0},
-		{"kitty left with num lock passes through", []byte{0x1b, '[', '1', ';', '1', '2', '9', 'D'}, -1, 0},
-		{"kitty left with caps lock passes through", []byte{0x1b, '[', '1', ';', '6', '5', 'D'}, -1, 0},
+		// Coalesced press+release from one Left tap (report-event-types on):
+		// the press matches first. This is the case the old exact-match missed.
+		{"kitty press then release coalesced", []byte{0x1b, '[', '1', ';', '1', 'D', 0x1b, '[', '1', ';', '1', ':', '3', 'D'}, 0, 6},
+		// Lock states (num_lock=128, caps_lock=64) are not real modifiers, so a
+		// plain Left with Num/Caps Lock on still detaches (ESC[1;129D / ESC[1;65D).
+		{"kitty left with num lock detaches", []byte{0x1b, '[', '1', ';', '1', '2', '9', 'D'}, 0, 8},
+		{"kitty left with caps lock detaches", []byte{0x1b, '[', '1', ';', '6', '5', 'D'}, 0, 7},
 		{"kitty ctrl+left with num lock is not detach", []byte{0x1b, '[', '1', ';', '1', '3', '3', 'D'}, -1, 0},
+		// Modified Left passes through to the harness (word nav / selection).
 		{"kitty ctrl+left is not detach", []byte{0x1b, '[', '1', ';', '5', 'D'}, -1, 0},
 		{"kitty alt+left is not detach", []byte{0x1b, '[', '1', ';', '3', 'D'}, -1, 0},
 		{"kitty shift+left is not detach", []byte{0x1b, '[', '1', ';', '2', 'D'}, -1, 0},

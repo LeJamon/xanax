@@ -311,8 +311,8 @@ func TestLoadDefaultKeysWhenFileMissing(t *testing.T) {
 	if !slices.Equal(cfg.Keys.Down, config.Binding{"down", "j"}) {
 		t.Errorf("default down keys = %v, want [down j]", cfg.Keys.Down)
 	}
-	if !slices.Equal(cfg.Keys.Remove, config.Binding{"ctrl+k"}) {
-		t.Errorf("default remove keys = %v, want [ctrl+k]", cfg.Keys.Remove)
+	if !slices.Equal(cfg.Keys.Remove, config.Binding{"ctrl+x"}) {
+		t.Errorf("default remove keys = %v, want [ctrl+x]", cfg.Keys.Remove)
 	}
 	if !slices.Equal(cfg.Keys.Quit, config.Binding{"ctrl+c"}) {
 		t.Errorf("default quit keys = %v, want [ctrl+c]", cfg.Keys.Quit)
