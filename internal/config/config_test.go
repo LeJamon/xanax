@@ -349,6 +349,9 @@ func TestLoadDefaultKeysWhenFileMissing(t *testing.T) {
 	if !slices.Equal(cfg.Keys.Preview, config.Binding{"space"}) {
 		t.Errorf("default preview keys = %v, want [space]", cfg.Keys.Preview)
 	}
+	if !slices.Equal(cfg.Keys.Logs, config.Binding{"l"}) {
+		t.Errorf("default logs keys = %v, want [l]", cfg.Keys.Logs)
+	}
 	if !slices.Equal(cfg.Keys.Settings, config.Binding{"s"}) {
 		t.Errorf("default settings keys = %v, want [s]", cfg.Keys.Settings)
 	}
@@ -366,7 +369,7 @@ func TestKeyMapActionsCoverEveryBinding(t *testing.T) {
 		}
 		names[a.Name] = true
 	}
-	for _, want := range []string{"settings", "remove", "confirm", "cancel", "quit", "form_prev"} {
+	for _, want := range []string{"settings", "logs", "remove", "confirm", "cancel", "quit", "form_prev"} {
 		if !names[want] {
 			t.Errorf("Actions() is missing the %q action", want)
 		}

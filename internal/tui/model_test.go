@@ -62,6 +62,8 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlX}
 	case "ctrl+k":
 		return tea.KeyMsg{Type: tea.KeyCtrlK}
+	case "ctrl+x":
+		return tea.KeyMsg{Type: tea.KeyCtrlX}
 	case "ctrl+c":
 		return tea.KeyMsg{Type: tea.KeyCtrlC}
 	case "space": // bubbletea encodes the spacebar as KeySpace carrying the rune
@@ -337,6 +339,90 @@ func TestRightOpensSelectedSession(t *testing.T) {
 	_, cmd := m.Update(key("right"))
 	if cmd == nil {
 		t.Fatal("right arrow on a selected session returned no command")
+	}
+}
+
+func TestOpenTerminalSessionShowsStoredLogInsteadOfResume(t *testing.T) {
+	logsDir := t.TempDir()
+	sess := &session.Session{
+		ID:                "donewithlog1",
+		Title:             "done",
+		RepoPath:          "/x",
+		Harness:           "codex",
+		HarnessSessionRef: "codex-ref",
+		Status:            session.StatusCompleted,
+	}
+	raw := []byte("\x1b[?1049h\x1b[2J\x1b[40;1HFINAL SCREEN")
+	if err := os.WriteFile(filepath.Join(logsDir, sess.ID+".raw"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.LogsDir = logsDir
+	next, cmd := m.Update(key("enter"))
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("enter on a terminal session returned no inspect command")
+	}
+	if !m.previewOn || m.previewLabel != "Logs" {
+		t.Fatalf("enter did not open log preview: on=%v label=%q", m.previewOn, m.previewLabel)
+	}
+	msg, ok := cmd().(previewMsg)
+	if !ok {
+		t.Fatalf("inspect command returned %T, want previewMsg", cmd())
+	}
+	if msg.label != "Logs" || !strings.Contains(msg.text, "FINAL SCREEN") {
+		t.Fatalf("log preview = (%q, %q), want rendered log content", msg.label, msg.text)
+	}
+	if strings.Contains(msg.text, "\x1b") {
+		t.Fatalf("log preview leaked raw escape sequences: %q", msg.text)
+	}
+}
+
+func TestLogsBindingShowsStoredLogForLiveSession(t *testing.T) {
+	logsDir := t.TempDir()
+	sess := &session.Session{ID: "livewithlog", Title: "live", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning}
+	if err := os.WriteFile(filepath.Join(logsDir, sess.ID+".raw"), []byte("\x1b[3;1Hstored output"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.LogsDir = logsDir
+	m.attachAliveFn = func(string) bool { return true }
+	next, cmd := m.Update(key("l"))
+	m = next.(model)
+	if cmd == nil || !m.previewOn || m.previewLabel != "Logs" {
+		t.Fatalf("logs binding did not open log preview: cmd=%v on=%v label=%q", cmd, m.previewOn, m.previewLabel)
+	}
+	msg, ok := cmd().(previewMsg)
+	if !ok {
+		t.Fatalf("logs command returned %T, want previewMsg", cmd())
+	}
+	if !strings.Contains(msg.text, "stored output") {
+		t.Fatalf("logs preview missing stored output: %q", msg.text)
+	}
+}
+
+func TestTerminalPreviewFallsBackToStoredLog(t *testing.T) {
+	logsDir := t.TempDir()
+	sess := &session.Session{ID: "deadpeek01", Title: "dead", RepoPath: "/x", Harness: "opencode", Status: session.StatusFailed}
+	if err := os.WriteFile(filepath.Join(logsDir, sess.ID+".raw"), []byte("\x1b[4;1Hfailure trace"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.LogsDir = logsDir
+	next, cmd := m.Update(key("space"))
+	m = next.(model)
+	if cmd == nil || !m.previewOn {
+		t.Fatalf("space on terminal session did not open preview: cmd=%v on=%v", cmd, m.previewOn)
+	}
+	msg, ok := cmd().(previewMsg)
+	if !ok {
+		t.Fatalf("preview command returned %T, want previewMsg", cmd())
+	}
+	if msg.label != "Logs" || !strings.Contains(msg.text, "failure trace") {
+		t.Fatalf("terminal preview = (%q, %q), want stored log fallback", msg.label, msg.text)
 	}
 }
 

@@ -55,9 +55,11 @@ the prompt box. The selected row is framed with accent-colored top/bottom rules.
   **and attach** — you land in the harness's own input with its native `/commands` and
   `@file` syntax (empty prompt = fresh harness). **Tab** opens the harness picker to
   choose which harness the next session uses. You can only type when it's selected.
-- **A session selected:** `→`/`Enter` open its window · `space` toggle a live peek ·
-  `e` rename · `r` resume · `Ctrl+K` remove (`Ctrl+K` again for live sessions) ·
-  `/` filter · `↓`/`j` back to the prompt box · `Ctrl+C` quit. (Rename is a
+- **A session selected:** `→`/`Enter` open a live window, or inspect stored logs
+  for a finished session · `l` show stored logs · `space` toggle a live peek
+  (falling back to stored logs for finished sessions) · `e` rename · `r` resume ·
+  `Ctrl+X` remove (`Ctrl+X` again for live sessions) · `/` filter · `↓`/`j` back
+  to the prompt box · `Ctrl+C` quit. (Rename is a
   rvr-only label; it never touches the harness's own session.) The peek shows
   the session's current screen in a pane above the prompt and closes when the
   selection moves; each row shows its live git branch (and open PR number, via
@@ -69,7 +71,8 @@ the prompt box. The selected row is framed with accent-colored top/bottom rules.
 
 Sessions survive closing the dashboard and even a reboot: on the next launch, rvr
 auto-resumes interrupted sessions via the harness's native resume (like Claude
-Code's background agents).
+Code's background agents). Finished sessions do not relaunch on `Enter`; use `r`
+  or `rvr resume <id>` when you explicitly want to resume one.
 
 ## Configuration
 

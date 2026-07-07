@@ -314,7 +314,11 @@ func (m model) renderPreview() string {
 		return ""
 	}
 	id := s.ID
-	label := mutedStyle.Render("Preview  ·  " + id[:min(8, len(id))])
+	title := m.previewLabel
+	if title == "" {
+		title = "Preview"
+	}
+	label := mutedStyle.Render(title + "  ·  " + id[:min(8, len(id))])
 	body := lipgloss.NewStyle().Foreground(colMuted).Render(bodyText)
 	return label + "\n" + hRules(colMuted, m.width).Render(body)
 }
@@ -575,8 +579,8 @@ func (m model) renderRow(s *session.Session, selected bool) string {
 	if selected {
 		title = selectStyle.Render(title)
 	}
-	meta := mutedStyle.Render(fmt.Sprintf("%s · %s · %s",
-		s.Harness, repoName(s.RepoPath), humanAge(s.CreatedAt)))
+	meta := mutedStyle.Render(fmt.Sprintf("%s · %s · %s · %s",
+		shortID(s.ID), s.Harness, repoName(s.RepoPath), humanAge(s.CreatedAt)))
 
 	content := fmt.Sprintf("%s %s   %s", glyph, title, meta)
 	if detail := rowDetailText(s); detail != "" {
@@ -747,8 +751,8 @@ func (m model) footer() string {
 			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),
 			keyHint(k.Up), keyHint(k.Quit))
 	default:
-		hint = fmt.Sprintf("%s select · %s open · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
-			updown, keyHint(k.Open), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
+		hint = fmt.Sprintf("%s select · %s open · %s logs · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
+			updown, keyHint(k.Open), keyHint(k.Logs), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
 			keyHint(k.Remove), keyHint(k.Settings), keyHint(k.Filter), keyHint(k.Quit))
 	}
 	out := footerStyle.Render(hint)

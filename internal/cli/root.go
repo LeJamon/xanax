@@ -148,6 +148,7 @@ func runDashboard(scope string) error {
 		Store:      st,
 		Cfg:        e.cfg,
 		SelfPath:   self,
+		LogsDir:    e.paths.LogsDir,
 		SocketDir:  e.paths.SocketDir,
 		ConfigPath: e.paths.ConfigFile,
 		Scope:      scope,

@@ -131,6 +131,7 @@ type KeyMap struct {
 	Remove   Binding `toml:"remove"`    // remove the session; live sessions confirm first
 	Resume   Binding `toml:"resume"`    // resume the session
 	Rename   Binding `toml:"rename"`    // rename its rvr label
+	Logs     Binding `toml:"logs"`      // show the stored session log
 	Preview  Binding `toml:"preview"`   // toggle the screen peek
 	Filter   Binding `toml:"filter"`    // open the filter bar
 	Settings Binding `toml:"settings"`  // open the in-TUI keybindings editor
@@ -242,6 +243,7 @@ func DefaultKeys() KeyMap {
 		Remove:   Binding{"ctrl+x"},
 		Resume:   Binding{"r", "ctrl+r"},
 		Rename:   Binding{"e"},
+		Logs:     Binding{"l"},
 		Preview:  Binding{"space"},
 		Filter:   Binding{"/"},
 		Settings: Binding{"s"},
@@ -274,6 +276,7 @@ func (k KeyMap) Actions() []KeyAction {
 		{"remove", "remove the session; confirms before killing live sessions", k.Remove},
 		{"resume", "resume the selected session", k.Resume},
 		{"rename", "rename the session's rvr label", k.Rename},
+		{"logs", "show the selected session's stored log", k.Logs},
 		{"preview", "toggle the screen peek", k.Preview},
 		{"filter", "filter the session list", k.Filter},
 		{"settings", "open this keybindings editor", k.Settings},
@@ -309,6 +312,7 @@ func mergeKeys(base, over KeyMap) KeyMap {
 		Remove:        pick(base.Remove, over.Remove),
 		Resume:        pick(base.Resume, over.Resume),
 		Rename:        pick(base.Rename, over.Rename),
+		Logs:          pick(base.Logs, over.Logs),
 		Preview:       pick(base.Preview, over.Preview),
 		Filter:        pick(base.Filter, over.Filter),
 		Settings:      pick(base.Settings, over.Settings),

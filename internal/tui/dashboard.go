@@ -23,6 +23,7 @@ import (
 	"rvr/internal/config"
 	"rvr/internal/session"
 	"rvr/internal/store"
+	"rvr/internal/termview"
 )
 
 // Deps are the services the dashboard needs from the CLI layer.
@@ -30,6 +31,7 @@ type Deps struct {
 	Store      *store.Store
 	Cfg        *config.Config
 	SelfPath   string // path to the rvr binary, for shelling out
+	LogsDir    string
 	SocketDir  string
 	ConfigPath string // config.toml, for adding harnesses from the dashboard
 	Version    string // rvr release, shown in the header
@@ -92,8 +94,9 @@ type model struct {
 	gitCache     map[string]gitInfo // live branch/PR per repo path
 	gitPollCount int                // gates the slower PR refresh
 
-	previewOn   bool   // preview panel open (space toggles it on the selected session)
-	previewText string // last fetched preview of the selected session
+	previewOn    bool   // preview panel open (space toggles it on the selected session)
+	previewText  string // last fetched preview of the selected session
+	previewLabel string
 
 	attachAliveFn func(string) bool
 	attachKillFn  func(string) error
@@ -334,6 +337,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case previewMsg:
 		if m.previewOn && msg.id == m.selectedID() { // ignore stale results after moving or closing
 			m.previewText = msg.text
+			if msg.label != "" {
+				m.previewLabel = msg.label
+			}
 		}
 		return m, nil
 
@@ -497,6 +503,7 @@ func (m model) closeMovedPreview(prevID string) model {
 	if m.selectedID() != prevID {
 		m.previewOn = false
 		m.previewText = ""
+		m.previewLabel = ""
 	}
 	return m
 }
@@ -725,11 +732,13 @@ func (m model) updateSessionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case keyMatches(k.Open, msg):
-		return m, m.openSession(s)
+		return m.openSession(s)
 	case keyMatches(k.Remove, msg):
 		return m.confirmOrRemove(s)
 	case keyMatches(k.Resume, msg):
 		return m, m.execInteractive("resume", s.ID)
+	case keyMatches(k.Logs, msg):
+		return m.showSessionLogs(s)
 	case keyMatches(k.Preview, msg):
 		return m.togglePreview()
 	case keyMatches(k.Rename, msg):
@@ -906,20 +915,20 @@ func (m model) execRename(id, title string) tea.Cmd {
 	}
 }
 
-// openSession enters the live agent window, or resumes it natively when the
-// supervisor is gone but the session can still be revived — either a harness
-// session ref was captured or its harness has resume_args (see
-// config.CanResume). This is why a completed session remains openable: it is
-// dead, but resume relaunches it through the harness's own continue mechanism.
-func (m model) openSession(s *session.Session) tea.Cmd {
+// openSession enters the live agent window. Terminal sessions are inspected
+// read-only from their stored log; explicit resume stays on the resume binding.
+func (m model) openSession(s *session.Session) (tea.Model, tea.Cmd) {
 	if m.alive(s.ID) {
-		return m.execInteractive("attach", s.ID)
+		return m, m.execInteractive("attach", s.ID)
+	}
+	if s.Status.Terminal() {
+		return m.showSessionLogs(s)
 	}
 	if m.deps.Cfg.CanResume(s) {
-		return m.execInteractive("resume", s.ID)
+		return m, m.execInteractive("resume", s.ID)
 	}
 	msg := "session " + shortID(s.ID) + " has ended — press " + keyHint(m.keys().Remove) + " to remove"
-	return func() tea.Msg { return actionDoneMsg{status: msg} }
+	return m, func() tea.Msg { return actionDoneMsg{status: msg} }
 }
 
 func (m model) current() *session.Session {
@@ -993,14 +1002,24 @@ func indexOfID(sessions []*session.Session, id string) int {
 func (m model) togglePreview() (tea.Model, tea.Cmd) {
 	m.previewOn = !m.previewOn
 	m.previewText = ""
+	m.previewLabel = "Preview"
 	if !m.previewOn {
+		m.previewLabel = ""
 		return m, nil
 	}
 	return m, m.previewCmd()
 }
 
-// previewCmd fetches a peek of the selected session's screen (nothing while
-// the preview is closed or the prompt box is selected). Runs off the main loop.
+func (m model) showSessionLogs(s *session.Session) (tea.Model, tea.Cmd) {
+	m.previewOn = true
+	m.previewText = ""
+	m.previewLabel = "Logs"
+	m.status = "showing stored log for " + shortID(s.ID)
+	return m, m.previewCmd()
+}
+
+// previewCmd fetches a live screen peek when possible, otherwise a rendered
+// read-only excerpt from the stored raw log. Runs off the main loop.
 func (m model) previewCmd() tea.Cmd {
 	if !m.previewOn {
 		return nil
@@ -1009,15 +1028,52 @@ func (m model) previewCmd() tea.Cmd {
 	if s == nil {
 		return nil
 	}
-	id, sock, cols := s.ID, filepath.Join(m.deps.SocketDir, s.ID+".sock"), m.width-4
+	id, sock, cols := s.ID, filepath.Join(m.deps.SocketDir, s.ID+".sock"), max(1, m.width-4)
+	forceLogs := m.previewLabel == "Logs"
 	return func() tea.Msg {
-		return previewMsg{id: id, text: attach.Peek(sock, previewRows, cols)}
+		if forceLogs || s.Status.Terminal() || !m.attachAlive(sock) {
+			return previewMsg{id: id, label: "Logs", text: m.sessionLogPreview(s, cols)}
+		}
+		return previewMsg{id: id, label: "Preview", text: attach.Peek(sock, previewRows, cols)}
 	}
 }
 
 type previewMsg struct {
-	id   string
-	text string
+	id    string
+	label string
+	text  string
+}
+
+func (m model) sessionLogPreview(s *session.Session, cols int) string {
+	if m.deps.LogsDir == "" {
+		return m.noSessionLogPreview(s, "log directory is unavailable")
+	}
+	data, err := os.ReadFile(filepath.Join(m.deps.LogsDir, s.ID+".raw"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return m.noSessionLogPreview(s, "no stored log found")
+		}
+		return "read stored log failed: " + err.Error()
+	}
+	if len(data) == 0 {
+		return m.noSessionLogPreview(s, "stored log is empty")
+	}
+	text := termview.PreviewBytes(data, 40, previewRows, cols)
+	if strings.TrimSpace(text) == "" {
+		return m.noSessionLogPreview(s, "stored log has no visible text")
+	}
+	return text
+}
+
+func (m model) noSessionLogPreview(s *session.Session, reason string) string {
+	lines := []string{reason + " for " + shortID(s.ID)}
+	if s.StatusDetail != "" {
+		lines = append(lines, s.StatusDetail)
+	}
+	if m.deps.Cfg.CanResume(s) {
+		lines = append(lines, "Press "+keyHint(m.keys().Resume)+" to resume.")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) alive(id string) bool {
