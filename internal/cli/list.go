@@ -13,9 +13,10 @@ import (
 func newListCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List sessions",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Aliases: []string{"ls", "ps"},
+		Short:   "List sessions",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := loadEnv()
 			if err != nil {

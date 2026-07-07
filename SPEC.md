@@ -402,7 +402,7 @@ Defaults for opencode, pi, and codex are built in; the file is optional.
 ```
 rvr                       # dashboard (default command)
 rvr new [flags] "prompt"  # --harness, --repo (default "."), --title, --attach/--no-attach
-rvr list [--json]
+rvr list [--json]         # aliases: ls, ps
 rvr attach <id-or-prefix>
 rvr resume <id-or-prefix> # reattach if alive, else native-resume relaunch (D3)
 rvr kill   <id-or-prefix>

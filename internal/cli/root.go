@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -31,14 +32,15 @@ sessions (opencode, pi, ...) so they keep running when your terminal doesn't.
 
 With no argument the dashboard shows every session. Given a path, it scopes to
 sessions whose repository is under that path and launches new ones there.`,
-		Version:       version,
-		Args:          cobra.MaximumNArgs(1),
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		Version:                    version,
+		Args:                       cobra.MaximumNArgs(1),
+		SuggestionsMinimumDistance: 2,
+		SilenceUsage:               true,
+		SilenceErrors:              true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			scope := ""
-			if len(args) == 1 {
-				scope = args[0]
+			scope, err := resolveRootScopeArg(cmd, args)
+			if err != nil {
+				return err
 			}
 			return runDashboard(scope)
 		},
@@ -54,6 +56,36 @@ sessions whose repository is under that path and launches new ones there.`,
 		newSuperviseCmd(),
 	)
 	return root
+}
+
+func resolveRootScopeArg(cmd *cobra.Command, args []string) (string, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
+	scope := args[0]
+	fi, err := os.Stat(scope)
+	switch {
+	case err == nil && fi.IsDir():
+		return scope, nil
+	case err == nil:
+		return "", fmt.Errorf("scope %q is not a directory", scope)
+	case os.IsNotExist(err):
+		return "", unknownRootCommandError(cmd, scope)
+	default:
+		return "", fmt.Errorf("scope %q is not a directory: %w", scope, err)
+	}
+}
+
+func unknownRootCommandError(cmd *cobra.Command, arg string) error {
+	msg := fmt.Sprintf("unknown command %q for %q", arg, cmd.CommandPath())
+	suggestions := cmd.SuggestionsFor(arg)
+	if len(suggestions) == 0 {
+		return fmt.Errorf("%s", msg)
+	}
+	if len(suggestions) == 1 {
+		return fmt.Errorf("%s\n\nDid you mean this?\n\t%s", msg, suggestions[0])
+	}
+	return fmt.Errorf("%s\n\nDid you mean one of these?\n\t%s", msg, strings.Join(suggestions, "\n\t"))
 }
 
 // env bundles the resolved paths and configuration every command needs.
