@@ -308,8 +308,8 @@ func (s *Store) exec1(id, query string, args ...any) error {
 	return nil
 }
 
-// DeleteSession removes a session and its event log. Used by the dashboard's
-// "kill" action to clear a session from the list.
+// DeleteSession removes a session and its event log. Used by the dashboard and
+// CLI remove actions to clear a session from the list.
 func (s *Store) DeleteSession(id string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -319,9 +319,19 @@ func (s *Store) DeleteSession(id string) error {
 		tx.Rollback()
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM sessions WHERE id = ?`, id); err != nil {
+	res, err := tx.Exec(`DELETE FROM sessions WHERE id = ?`, id)
+	if err != nil {
 		tx.Rollback()
 		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	if n == 0 {
+		tx.Rollback()
+		return fmt.Errorf("%w: %q", ErrNotFound, id)
 	}
 	return tx.Commit()
 }

@@ -36,7 +36,9 @@ printf '%s\n' "long prompt" | rvr new -
 rvr list [--json]                      # aliases: ls, ps
 rvr attach <id>                        # reattach to a live session
 rvr resume <id>                        # reattach, or relaunch a dead one natively
-rvr kill   <id>
+rvr kill   <id>                        # terminate but keep the session record
+rvr rm     <id>... [--force]           # remove sessions; --force kills live ones first
+rvr prune                              # remove terminal sessions
 rvr logs   <id> [-f]                   # print (or follow) a session's raw output
 rvr config                             # print resolved config + paths
 ```

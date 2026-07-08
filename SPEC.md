@@ -408,6 +408,8 @@ rvr list [--json]         # aliases: ls, ps
 rvr attach <id-or-prefix>
 rvr resume <id-or-prefix> # reattach if alive, else native-resume relaunch (D3)
 rvr kill   <id-or-prefix>
+rvr rm     <id-or-prefix>... [--force]
+rvr prune
 rvr logs   <id-or-prefix> [-f] # print or follow the raw session output
 rvr config                # print resolved config + paths
 rvr _supervise <id>       # hidden; internal supervisor entrypoint
