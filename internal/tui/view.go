@@ -383,6 +383,10 @@ type listBlock struct {
 
 func (m model) renderList(maxRows int) string {
 	if len(m.sessions) == 0 {
+		if m.filter != "" {
+			return mutedStyle.Render(fmt.Sprintf("No sessions match %q — press %s to clear filter.",
+				m.filter, keyHint(m.keys().Cancel)))
+		}
 		return mutedStyle.Render("No sessions yet — type a prompt below and press enter.")
 	}
 	if maxRows <= 0 {
@@ -723,6 +727,9 @@ func (m model) footer() string {
 		hint = fmt.Sprintf("%s select · %s open · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
 			updown, keyHint(k.Open), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
 			keyHint(k.Remove), keyHint(k.Settings), keyHint(k.Filter), keyHint(k.Quit))
+	}
+	if m.filter != "" && !m.filtering {
+		hint += fmt.Sprintf(" · %s clear filter", keyHint(k.Cancel))
 	}
 	out := footerStyle.Render(hint)
 	if m.status != "" {

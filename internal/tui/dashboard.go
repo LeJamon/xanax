@@ -509,6 +509,8 @@ func (m model) closeMovedPreview(prevID string) model {
 func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := m.keys()
 	switch {
+	case keyMatches(k.Cancel, msg) && m.filter != "":
+		return m.clearFilter(), nil
 	case keyMatches(k.HarnessPicker, msg):
 		// Always open the picker — even with one (or zero) harnesses it is the
 		// only way to reach the '+' add-harness form. It opens with the search box
@@ -715,9 +717,7 @@ func (m model) updateSessionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Cancel clears an applied filter — checked before the empty-list guard so it
 	// still works when the filter currently hides every row (current() == nil).
 	if keyMatches(k.Cancel, msg) && m.filter != "" {
-		m.filter = ""
-		m.sessions = filterSessions(m.allSessions, "")
-		return m, nil
+		return m.clearFilter(), nil
 	}
 	s := m.current()
 	if s == nil {
@@ -773,11 +773,8 @@ func (m model) updateFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case keyMatches(k.Cancel, msg):
 		m.filtering = false
-		m.filter = ""
 		m.filterInput.Blur()
-		m.filterInput.SetValue("")
-		m.sessions = filterSessions(m.allSessions, "")
-		return m, nil
+		return m.clearFilter(), nil
 	case keyMatches(k.Up, msg):
 		return m.moveUp()
 	case keyMatches(k.Down, msg):
@@ -791,6 +788,13 @@ func (m model) updateFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = max(0, len(m.sessions)-1)
 	}
 	return m, cmd
+}
+
+func (m model) clearFilter() model {
+	m.filter = ""
+	m.filterInput.SetValue("")
+	m.sessions = filterSessions(m.allSessions, "")
+	return m
 }
 
 func (m model) startRename(s *session.Session) (tea.Model, tea.Cmd) {
