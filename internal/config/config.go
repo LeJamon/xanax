@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"xanax/internal/attach"
 	"xanax/internal/session"
 )
 
@@ -466,6 +467,9 @@ func Load(path string) (*Config, error) {
 func (c *Config) validate() error {
 	if _, ok := c.Harnesses[c.DefaultHarness]; !ok {
 		return fmt.Errorf("default_harness %q is not a configured harness", c.DefaultHarness)
+	}
+	if _, err := attach.ParseExitKey(c.InteractExitKey); err != nil {
+		return err
 	}
 	for name, h := range c.Harnesses {
 		switch h.Adapter {

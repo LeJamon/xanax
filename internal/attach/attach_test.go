@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,6 +180,55 @@ func TestFindDetach(t *testing.T) {
 			idx, length := findDetach(c.data, exit)
 			if idx != c.wantIdx || length != c.wantLen {
 				t.Errorf("findDetach(%v) = (%d,%d), want (%d,%d)", c.data, idx, length, c.wantIdx, c.wantLen)
+			}
+		})
+	}
+}
+
+func TestParseExitKey(t *testing.T) {
+	cases := []struct {
+		spec string
+		want byte
+	}{
+		{`ctrl+\`, 0x1c},
+		{" ctrl+a ", 0x01},
+		{"CTRL+Z", 0x1a},
+		{"ctrl+]", 0x1d},
+		{"ctrl+^", 0x1e},
+		{"ctrl+_", 0x1f},
+	}
+	for _, c := range cases {
+		t.Run(c.spec, func(t *testing.T) {
+			got, err := ParseExitKey(c.spec)
+			if err != nil {
+				t.Fatalf("ParseExitKey(%q): %v", c.spec, err)
+			}
+			if got != c.want {
+				t.Fatalf("ParseExitKey(%q) = %#x, want %#x", c.spec, got, c.want)
+			}
+		})
+	}
+}
+
+func TestParseExitKeyRejectsInvalidAndUnsafeSpecs(t *testing.T) {
+	cases := []struct {
+		spec string
+		want string
+	}{
+		{"", "invalid"},
+		{"f12", "invalid"},
+		{"super+f12", "invalid"},
+		{"ctrl+space", "invalid"},
+		{"ctrl+[", "invalid"},
+		{"ctrl+m", "Enter"},
+		{"ctrl+j", "Enter"},
+		{"ctrl+i", "Tab"},
+		{"ctrl+h", "Backspace"},
+	}
+	for _, c := range cases {
+		t.Run(c.spec, func(t *testing.T) {
+			if got, err := ParseExitKey(c.spec); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("ParseExitKey(%q) = %#x, %v; want error containing %q", c.spec, got, err, c.want)
 			}
 		})
 	}

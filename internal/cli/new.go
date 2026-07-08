@@ -109,9 +109,13 @@ func newNewCmd() *cobra.Command {
 
 // runAttach connects to a live session and proxies the terminal.
 func runAttach(e *env, id string) error {
+	exitKey, err := attach.ParseExitKey(e.cfg.InteractExitKey)
+	if err != nil {
+		return err
+	}
 	res, err := attach.Run(attach.Options{
 		SocketPath: e.socketPath(id),
-		ExitKey:    attach.ParseExitKey(e.cfg.InteractExitKey),
+		ExitKey:    exitKey,
 	})
 	if err != nil {
 		return err

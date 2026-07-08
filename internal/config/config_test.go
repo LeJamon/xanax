@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -284,6 +285,40 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 	_, err := config.Load(path)
 	if err == nil || !strings.Contains(err.Error(), "unknown key") {
 		t.Fatalf("want unknown-key error, got %v", err)
+	}
+}
+
+func TestLoadAcceptsValidInteractExitKey(t *testing.T) {
+	path := writeConfig(t, "interact_exit_key = \"ctrl+]\"\n")
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.InteractExitKey != "ctrl+]" {
+		t.Fatalf("InteractExitKey = %q, want ctrl+]", cfg.InteractExitKey)
+	}
+}
+
+func TestLoadRejectsInvalidInteractExitKey(t *testing.T) {
+	for _, c := range []struct {
+		spec string
+		want string
+	}{
+		{"ctrl+space", "interact_exit_key"},
+		{"F12", "interact_exit_key"},
+		{"super+F12", "interact_exit_key"},
+		{"ctrl+m", "Enter"},
+		{"ctrl+j", "Enter"},
+		{"ctrl+i", "Tab"},
+		{"ctrl+h", "Backspace"},
+	} {
+		t.Run(c.spec, func(t *testing.T) {
+			path := writeConfig(t, "interact_exit_key = "+strconv.Quote(c.spec)+"\n")
+			_, err := config.Load(path)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("interact_exit_key=%q: want error containing %q, got %v", c.spec, c.want, err)
+			}
+		})
 	}
 }
 

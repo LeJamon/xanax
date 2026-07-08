@@ -423,27 +423,48 @@ func parseCSIInt(data []byte, i int) (val, next int, ok bool) {
 	return val, i, i > start
 }
 
+const exitKeyAcceptedForms = `ctrl+a through ctrl+z except ctrl+h, ctrl+i, ctrl+j, ctrl+m; or ctrl+\, ctrl+], ctrl+^, ctrl+_`
+
 // ParseExitKey converts a config key spec like "ctrl+\" to its control byte.
-// Unrecognized specs fall back to ctrl+\ (0x1c).
-func ParseExitKey(spec string) byte {
+func ParseExitKey(spec string) (byte, error) {
 	s := strings.ToLower(strings.TrimSpace(spec))
-	s = strings.TrimPrefix(s, "ctrl+")
-	if len(s) != 1 {
-		return 0x1c
+	if !strings.HasPrefix(s, "ctrl+") {
+		return 0, fmt.Errorf("interact_exit_key %q is invalid (want %s)", spec, exitKeyAcceptedForms)
 	}
-	c := s[0]
+	key := strings.TrimPrefix(s, "ctrl+")
+	if len(key) != 1 {
+		return 0, fmt.Errorf("interact_exit_key %q is invalid (want %s)", spec, exitKeyAcceptedForms)
+	}
+	c := key[0]
+	var b byte
 	switch {
 	case c >= 'a' && c <= 'z':
-		return c - 'a' + 1
+		b = c - 'a' + 1
 	case c == '\\':
-		return 0x1c
+		b = 0x1c
 	case c == ']':
-		return 0x1d
+		b = 0x1d
 	case c == '^':
-		return 0x1e
+		b = 0x1e
 	case c == '_':
-		return 0x1f
+		b = 0x1f
 	default:
-		return 0x1c
+		return 0, fmt.Errorf("interact_exit_key %q is invalid (want %s)", spec, exitKeyAcceptedForms)
 	}
+	if name := unsafeExitKeyName(b); name != "" {
+		return 0, fmt.Errorf("interact_exit_key %q maps to %s; choose a chord that will not detach during normal input", spec, name)
+	}
+	return b, nil
+}
+
+func unsafeExitKeyName(b byte) string {
+	switch b {
+	case '\r', '\n':
+		return "Enter"
+	case '\t':
+		return "Tab"
+	case '\b':
+		return "Backspace"
+	}
+	return ""
 }
