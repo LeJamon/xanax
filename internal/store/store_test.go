@@ -214,6 +214,38 @@ func TestEventLog(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionRemovesSessionAndEvents(t *testing.T) {
+	st := openTemp(t)
+	in := sample("33333333-0000-0000-0000-000000000002")
+	if err := st.CreateSession(in); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordEvent(in.ID, "created", nil); err != nil {
+		t.Fatalf("RecordEvent: %v", err)
+	}
+
+	if err := st.DeleteSession(in.ID); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if _, err := st.GetSession(in.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted session lookup err = %v, want ErrNotFound", err)
+	}
+	events, err := st.ListEvents(in.ID)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events remained after delete: %+v", events)
+	}
+}
+
+func TestDeleteSessionUnknown(t *testing.T) {
+	st := openTemp(t)
+	if err := st.DeleteSession("missing"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DeleteSession missing err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestListSessionsNewestFirst(t *testing.T) {
 	st := openTemp(t)
 	older := sample("00000000-0000-0000-0000-000000000001")
