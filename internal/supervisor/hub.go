@@ -74,6 +74,7 @@ type hub struct {
 	ring    *ringbuf.Ring
 	screen  *screen
 	modes   map[int]bool // sticky DEC modes the harness enabled (mouse, ...)
+	keys    kittyKeyboardState
 	info    wire.Info
 	state   wire.State
 }
@@ -97,6 +98,7 @@ func (h *hub) broadcastOutput(p []byte) {
 	h.screen.write(p)
 	h.ring.Write(p)
 	observeModes(h.modes, p)
+	observeKittyKeyboard(&h.keys, p)
 	for _, chunk := range chunkBytes(p, outputChunkSize) {
 		h.fanout(wire.Frame{Type: wire.TypeOutput, Payload: chunk})
 	}
@@ -146,9 +148,14 @@ func (h *hub) register(cl *client, snapshotReplay bool) {
 	if snapshotReplay {
 		primer = h.screen.snapshot()
 	}
-	// Re-enable sticky modes (mouse, bracketed paste, focus) the harness set —
-	// the previous detach reset them on the client's terminal.
+	// Re-enable sticky terminal modes the harness set — the previous detach reset
+	// them on the client's terminal. Kitty keyboard mode is stackful, so strip
+	// any raw push/pop bytes from scrollback, reset, and append one synthesized
+	// replay of the tracked stack.
+	primer = stripKittyKeyboardSequences(primer)
 	primer = append(primer, modeSequence(h.modes)...)
+	primer = append(primer, kittyKeyboardResetSequence()...)
+	primer = append(primer, h.keys.sequence()...)
 	for _, chunk := range chunkBytes(primer, outputChunkSize) {
 		cl.enqueue(wire.Frame{Type: wire.TypeOutput, Payload: chunk})
 	}

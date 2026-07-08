@@ -271,6 +271,64 @@ func TestAttachConfiguredFullScreenReplaysSnapshotWithoutAltScreen(t *testing.T)
 	time.Sleep(300 * time.Millisecond)
 }
 
+func TestAttachReplaysKittyKeyboardState(t *testing.T) {
+	paths := testPaths(t)
+	st, err := store.Open(paths.DBFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	sess := &session.Session{
+		ID: "kitty01", Title: "kitty keyboard", RepoPath: t.TempDir(),
+		Harness: "generic", Status: session.StatusStarting,
+	}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	h := config.Harness{Adapter: config.AdapterGeneric, Command: "sh",
+		Args: []string{"-c", `printf 'before\033[>1uafter'; sleep 300`}}
+
+	go supervisor.Run(supervisor.Options{
+		Session: sess, Harness: h, Paths: paths, Store: st, Logger: quietLogger(),
+	})
+
+	sock := filepath.Join(paths.SocketDir, sess.ID+".sock")
+	waitAlive(t, sock)
+	time.Sleep(500 * time.Millisecond)
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	var got []byte
+	conn.SetReadDeadline(time.Now().Add(1500 * time.Millisecond))
+	for range 20 {
+		f, err := wire.Read(conn)
+		if err != nil {
+			break
+		}
+		if f.Type == wire.TypeOutput {
+			got = append(got, f.Payload...)
+		}
+	}
+
+	if !bytes.Contains(got, []byte("beforeafter")) {
+		t.Fatalf("attach primer lost visible output around Kitty sequence; got %.200q", got)
+	}
+	if bytes.Contains(got, []byte("before\x1b[>1uafter")) {
+		t.Fatalf("raw Kitty push remained in scrollback replay; got %.200q", got)
+	}
+	if !bytes.Contains(got, []byte("\x1b[<64u\x1b[=0;1u\x1b[>1u")) {
+		t.Fatalf("attach primer did not reset and replay Kitty keyboard state; got %.200q", got)
+	}
+
+	wire.WriteJSON(conn, wire.TypeKill, struct{}{})
+	time.Sleep(300 * time.Millisecond)
+}
+
 // TestAnswersTerminalQueriesBeforeAttach verifies the supervisor replies to a
 // startup DSR query so a TUI initializes correctly even though no client is
 // attached yet. The fake harness sends the query, reads back the 9-byte reply,

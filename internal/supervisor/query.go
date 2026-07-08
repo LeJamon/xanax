@@ -49,7 +49,7 @@ func terminalQueryResponses(chunk []byte, rows, cols uint16) []byte {
 		out = append(out, "\x1b[>0;10;1c"...) // secondary DA
 	}
 	if bytes.Contains(chunk, []byte("\x1b[?u")) { // Kitty keyboard protocol query
-		out = append(out, "\x1b[?0u"...) // not supported
+		out = append(out, "\x1b[?0u"...) // supported, no flags enabled yet
 	}
 	if bytes.Contains(chunk, []byte("\x1b[?2026$p")) { // DECRQM synchronized output
 		out = append(out, "\x1b[?2026;2$y"...) // recognized, currently reset

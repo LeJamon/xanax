@@ -29,8 +29,7 @@ import (
 // so any one left set here leaks into the dashboard. The mouse group covers
 // both the SGR (1006) and urxvt (1015) encodings.
 var resetModes = []byte("" +
-	"\x1b[<u\x1b[<u\x1b[<u" + // pop Kitty keyboard flags (no-op when stack empty)
-	"\x1b[=0;1u" + //           force Kitty keyboard flags to zero
+	"\x1b[<64u\x1b[=0;1u" + // pop Kitty keyboard stack, force flags to zero
 	"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l" + // mouse tracking off (SGR + urxvt)
 	"\x1b[?2004l" + // bracketed paste off
 	"\x1b[?1004l" + // focus reporting off
