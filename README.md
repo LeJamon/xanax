@@ -35,7 +35,9 @@ xanax new --harness pi --repo ~/code/api "add pagination"
 xanax list [--json]
 xanax attach <id>                        # reattach to a live session
 xanax resume <id>                        # reattach, or relaunch a dead one natively
-xanax kill   <id>
+xanax kill   <id>                        # terminate but keep the session record
+xanax rm     <id>... [--force]           # remove sessions; --force kills live ones first
+xanax prune                              # remove terminal sessions
 xanax logs   <id> [-f]                   # print (or follow) a session's raw output
 xanax config                             # print resolved config + paths
 ```
@@ -56,7 +58,7 @@ the prompt box. The selected row is framed with accent-colored top/bottom rules.
   `@file` syntax (empty prompt = fresh harness). **Tab** opens the harness picker to
   choose which harness the next session uses. You can only type when it's selected.
 - **A session selected:** `→`/`Enter` open its window · `space` toggle a live peek ·
-  `e` rename · `r` resume · `Ctrl+K` remove (`Ctrl+K` again for live sessions) ·
+  `e` rename · `r` resume · `Ctrl+X` remove (`Ctrl+X` again for live sessions) ·
   `/` filter · `↓`/`j` back to the prompt box · `Ctrl+C` quit. (Rename is a
   xanax-only label; it never touches the harness's own session.) The peek shows
   the session's current screen in a pane above the prompt and closes when the

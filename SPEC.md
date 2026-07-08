@@ -358,7 +358,7 @@ branch = "6"
 [keys]
 up = ["up", "k"]
 down = ["down", "j"]
-remove = ["ctrl+k"]              # live sessions ask for this key a second time
+remove = ["ctrl+x"]              # live sessions ask for this key a second time
 filter = ["ctrl+f", "/"]
 # up, down, confirm, cancel, quit, open, resume, rename, preview, quit_list,
 # launch_attach, harness_picker, add_harness, set_default, modify_harness,
@@ -406,6 +406,8 @@ xanax list [--json]
 xanax attach <id-or-prefix>
 xanax resume <id-or-prefix> # reattach if alive, else native-resume relaunch (D3)
 xanax kill   <id-or-prefix>
+xanax rm     <id-or-prefix>... [--force]
+xanax prune
 xanax config                # print resolved config + paths
 xanax _supervise <id>       # hidden; internal supervisor entrypoint
 ```
@@ -443,7 +445,7 @@ not the selected row.
   scales to any number of harnesses. The composer label always names the harness the
   next session will use. `↑` moves up into the sessions.
 - **A session selected:** you are not typing, so action keys act on it — `→`/`Enter`
-  open the live window, `Ctrl+K` removes it (press `Ctrl+K` again first for live
+  open the live window, `Ctrl+X` removes it (press `Ctrl+X` again first for live
   sessions, so a live harness is not killed by one keypress), `r` resumes, `e`
   **renames** (a xanax-only UI label; never touches the harness's own session), `s`
   opens **settings** (the keybindings editor, below), and `↓`/`j` returns to the
