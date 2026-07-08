@@ -8,9 +8,10 @@ import (
 
 func newAttachCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "attach <session-id>",
-		Short: "Attach to a running session",
-		Args:  cobra.ExactArgs(1),
+		Use:               "attach <session-id>",
+		Short:             "Attach to a running session",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSessionIDs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := loadEnv()
 			if err != nil {

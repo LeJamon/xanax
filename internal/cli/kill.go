@@ -11,9 +11,10 @@ import (
 
 func newKillCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "kill <session-id>",
-		Short: "Terminate a session",
-		Args:  cobra.ExactArgs(1),
+		Use:               "kill <session-id>",
+		Short:             "Terminate a session",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSessionIDs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := loadEnv()
 			if err != nil {

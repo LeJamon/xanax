@@ -15,9 +15,10 @@ import (
 func newLogsCmd() *cobra.Command {
 	var follow bool
 	cmd := &cobra.Command{
-		Use:   "logs <session-id>",
-		Short: "Print a session's raw output log",
-		Args:  cobra.ExactArgs(1),
+		Use:               "logs <session-id>",
+		Short:             "Print a session's raw output log",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSessionIDs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := loadEnv()
 			if err != nil {

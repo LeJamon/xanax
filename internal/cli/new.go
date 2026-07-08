@@ -104,6 +104,9 @@ func newNewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", ".", "repository to run the agent in")
 	cmd.Flags().StringVar(&title, "title", "", "session title (default: derived from prompt)")
 	cmd.Flags().BoolVar(&noAttach, "no-attach", false, "do not attach after launching")
+	if err := cmd.RegisterFlagCompletionFunc("harness", completeHarnessNames); err != nil {
+		panic(err)
+	}
 	return cmd
 }
 

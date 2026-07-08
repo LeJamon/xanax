@@ -11,9 +11,10 @@ import (
 
 func newResumeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "resume <session-id>",
-		Short: "Reattach to a live session, or relaunch a dead one via the harness's native resume",
-		Args:  cobra.ExactArgs(1),
+		Use:               "resume <session-id>",
+		Short:             "Reattach to a live session, or relaunch a dead one via the harness's native resume",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSessionIDs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := loadEnv()
 			if err != nil {
