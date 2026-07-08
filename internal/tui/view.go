@@ -693,6 +693,12 @@ func (m model) footer() string {
 	// Hints are built from the live bindings (keyHint), so remapping a key in the
 	// config updates the footer to match rather than advertising a stale default.
 	updown := keyHint(k.Up) + "/" + keyHint(k.Down)
+	withClearFilterHint := func(hint string) string {
+		if m.filter == "" {
+			return hint
+		}
+		return hint + fmt.Sprintf(" · %s clear filter", keyHint(k.Cancel))
+	}
 	var hint string
 	switch {
 	case m.addingHarness:
@@ -720,16 +726,13 @@ func (m model) footer() string {
 				updown, keyHint(k.Confirm), keyHint(k.Cancel))
 		}
 	case m.onComposer:
-		hint = fmt.Sprintf("%s launch · %s launch+attach · %s harness (+ add) · %s sessions · %s quit",
+		hint = withClearFilterHint(fmt.Sprintf("%s launch · %s launch+attach · %s harness (+ add) · %s sessions · %s quit",
 			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),
-			keyHint(k.Up), keyHint(k.Quit))
+			keyHint(k.Up), keyHint(k.Quit)))
 	default:
-		hint = fmt.Sprintf("%s select · %s open · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
+		hint = withClearFilterHint(fmt.Sprintf("%s select · %s open · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
 			updown, keyHint(k.Open), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
-			keyHint(k.Remove), keyHint(k.Settings), keyHint(k.Filter), keyHint(k.Quit))
-	}
-	if m.filter != "" && !m.filtering {
-		hint += fmt.Sprintf(" · %s clear filter", keyHint(k.Cancel))
+			keyHint(k.Remove), keyHint(k.Settings), keyHint(k.Filter), keyHint(k.Quit)))
 	}
 	out := footerStyle.Render(hint)
 	if m.status != "" {

@@ -1290,11 +1290,70 @@ func TestFooterReflectsReboundKeys(t *testing.T) {
 }
 
 func TestFooterShowsClearFilterHintWhenFilterApplied(t *testing.T) {
-	m := newTestModel(sampleSessions())
-	m.filter = "zzz"
-	m.sessions = filterSessions(m.allSessions, m.filter)
-	if foot := stripANSI(m.footer()); !strings.Contains(foot, "esc clear filter") {
-		t.Fatalf("footer missing clear-filter hint: %q", foot)
+	tests := []struct {
+		name string
+		mode func(model) model
+		want bool
+	}{
+		{
+			name: "composer",
+			mode: func(m model) model {
+				m.filter = "zzz"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.onComposer = true
+				return m
+			},
+			want: true,
+		},
+		{
+			name: "session list",
+			mode: func(m model) model {
+				m.filter = "refactor"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.onComposer = false
+				return m
+			},
+			want: true,
+		},
+		{
+			name: "filtering",
+			mode: func(m model) model {
+				m.filter = "refactor"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.filtering = true
+				return m
+			},
+		},
+		{
+			name: "settings",
+			mode: func(m model) model {
+				m.filter = "refactor"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.settingsOn = true
+				return m
+			},
+		},
+		{
+			name: "remove confirmation",
+			mode: func(m model) model {
+				m.filter = "refactor"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.onComposer = false
+				m.confirmRemoveID = m.sessions[0].ID
+				return m
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.mode(newTestModel(sampleSessions()))
+			hasHint := strings.Contains(stripANSI(m.footer()), "esc clear filter")
+			if hasHint != tc.want {
+				t.Fatalf("clear-filter hint presence = %v, want %v; footer: %q",
+					hasHint, tc.want, stripANSI(m.footer()))
+			}
+		})
 	}
 }
 
