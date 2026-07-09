@@ -1,6 +1,6 @@
-// Package tui is the xanax dashboard: an arrow-key-navigated list of sessions
+// Package tui is the rvr dashboard: an arrow-key-navigated list of sessions
 // plus an always-present prompt box, both treated as selectable rows. Opening a
-// session shells out to `xanax attach` so the live terminal owns the process
+// session shells out to `rvr attach` so the live terminal owns the process
 // cleanly (SPEC.md §10).
 package tui
 
@@ -19,20 +19,20 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"xanax/internal/attach"
-	"xanax/internal/config"
-	"xanax/internal/session"
-	"xanax/internal/store"
+	"rvr/internal/attach"
+	"rvr/internal/config"
+	"rvr/internal/session"
+	"rvr/internal/store"
 )
 
 // Deps are the services the dashboard needs from the CLI layer.
 type Deps struct {
 	Store      *store.Store
 	Cfg        *config.Config
-	SelfPath   string // path to the xanax binary, for shelling out
+	SelfPath   string // path to the rvr binary, for shelling out
 	SocketDir  string
 	ConfigPath string // config.toml, for adding harnesses from the dashboard
-	Version    string // xanax release, shown in the header
+	Version    string // rvr release, shown in the header
 	// Scope, when set, restricts the dashboard to sessions under this absolute
 	// path and launches new sessions there. Empty = all sessions, cwd launches.
 	Scope string
@@ -801,7 +801,7 @@ func (m model) startRename(s *session.Session) (tea.Model, tea.Cmd) {
 	return m, m.renameInput.Focus()
 }
 
-// updateRenameKey runs while renaming a session (xanax UI label only).
+// updateRenameKey runs while renaming a session (rvr UI label only).
 func (m model) updateRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := m.keys()
 	switch {
@@ -858,9 +858,9 @@ func (m model) execKillRemove(s *session.Session) tea.Cmd {
 	}
 }
 
-// newSessionArgs builds the `xanax new` argv for the selected harness. repo,
+// newSessionArgs builds the `rvr new` argv for the selected harness. repo,
 // when set, targets a specific directory (the dashboard's scope); empty lets
-// `xanax new` default to cwd. "--" stops flag parsing so prompts beginning
+// `rvr new` default to cwd. "--" stops flag parsing so prompts beginning
 // with "-" are safe.
 func newSessionArgs(harness, repo, prompt string, attach bool) []string {
 	args := []string{"new", "--harness", harness}

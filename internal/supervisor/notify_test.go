@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"xanax/internal/session"
-	"xanax/internal/wire"
+	"rvr/internal/session"
+	"rvr/internal/wire"
 )
 
 func silentLogger() *slog.Logger {

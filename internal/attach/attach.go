@@ -1,6 +1,6 @@
 // Package attach is the raw terminal client that proxies a user's terminal to
 // a session's PTY over its unix socket (SPEC.md §10). It runs as its own
-// process: standalone for `xanax attach`/`new`, and shelled out to by the
+// process: standalone for `rvr attach`/`new`, and shelled out to by the
 // dashboard when entering interact mode. Owning the whole process means the
 // terminal is always restored cleanly and no input reader leaks back into the
 // dashboard.
@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/term"
 
-	"xanax/internal/wire"
+	"rvr/internal/wire"
 )
 
 // resetModes returns the client's terminal to a sane state when the

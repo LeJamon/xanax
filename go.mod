@@ -1,4 +1,4 @@
-module xanax
+module rvr
 
 go 1.26.1
 

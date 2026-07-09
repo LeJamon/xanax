@@ -1,4 +1,4 @@
-// Package cli wires the xanax command tree (SPEC.md §9).
+// Package cli wires the rvr command tree (SPEC.md §9).
 package cli
 
 import (
@@ -9,12 +9,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"xanax/internal/config"
-	"xanax/internal/store"
-	"xanax/internal/tui"
+	"rvr/internal/config"
+	"rvr/internal/store"
+	"rvr/internal/tui"
 )
 
-// version is the xanax release, shown by `--version` and in the dashboard header.
+// version is the rvr release, shown by `--version` and in the dashboard header.
 const version = "0.1.0-dev"
 
 // Execute runs the root command and returns its error for main to report.
@@ -24,9 +24,9 @@ func Execute() error {
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "xanax [path]",
+		Use:   "rvr [path]",
 		Short: "Session manager for autonomous AI coding agents",
-		Long: `Xanax launches, supervises, and reattaches to autonomous AI coding agent
+		Long: `rvr launches, supervises, and reattaches to autonomous AI coding agent
 sessions (opencode, pi, ...) so they keep running when your terminal doesn't.
 
 With no argument the dashboard shows every session. Given a path, it scopes to

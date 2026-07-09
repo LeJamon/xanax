@@ -3,8 +3,8 @@ package supervisor
 import (
 	"testing"
 
-	"xanax/internal/adapter"
-	"xanax/internal/session"
+	"rvr/internal/adapter"
+	"rvr/internal/session"
 )
 
 func TestMapState(t *testing.T) {

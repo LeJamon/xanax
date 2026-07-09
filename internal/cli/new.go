@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"xanax/internal/attach"
-	"xanax/internal/session"
+	"rvr/internal/attach"
+	"rvr/internal/session"
 )
 
 func newNewCmd() *cobra.Command {
@@ -38,7 +38,7 @@ func newNewCmd() *cobra.Command {
 			}
 			h, ok := e.cfg.Harnesses[harnessName]
 			if !ok {
-				return fmt.Errorf("unknown harness %q (see `xanax config`)", harnessName)
+				return fmt.Errorf("unknown harness %q (see `rvr config`)", harnessName)
 			}
 			if err := e.checkHarnessCommand(harnessName, h); err != nil {
 				return err
@@ -87,7 +87,7 @@ func newNewCmd() *cobra.Command {
 
 			wantAttach := !noAttach && term.IsTerminal(int(os.Stdout.Fd()))
 			if !wantAttach {
-				fmt.Fprintf(out, "Attach with: xanax attach %s\n", shortID(sess.ID))
+				fmt.Fprintf(out, "Attach with: rvr attach %s\n", shortID(sess.ID))
 				return nil
 			}
 			wait := 10 * time.Second

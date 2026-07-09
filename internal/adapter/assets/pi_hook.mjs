@@ -1,17 +1,17 @@
-// xanax pi hook extension.
+// rvr pi hook extension.
 //
 // Loaded with `pi -e <this file>`. pi loads extensions through jiti as ES
 // modules with a default-exported factory that receives the ExtensionAPI. This
-// hook connects to the unix socket named by XANAX_HOOK_SOCKET and reports pi
-// lifecycle events to the xanax supervisor as newline-delimited JSON:
+// hook connects to the unix socket named by RVR_HOOK_SOCKET and reports pi
+// lifecycle events to the rvr supervisor as newline-delimited JSON:
 //   {"event": "agent_start", "ref": "<session file path>"}
 //
-// The session file path (used by xanax for `pi --session <ref>` resume) is not
+// The session file path (used by rvr for `pi --session <ref>` resume) is not
 // in the event payloads; it is read from ctx.sessionManager.getSessionFile().
 import * as net from "node:net";
 
 export default function (pi) {
-  const socketPath = process.env.XANAX_HOOK_SOCKET;
+  const socketPath = process.env.RVR_HOOK_SOCKET;
   let sock = null;
   if (socketPath) {
     sock = net.createConnection(socketPath);

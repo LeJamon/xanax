@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"rvr/internal/config"
+	"rvr/internal/session"
 )
 
 func testDeps(t *testing.T) Deps {
@@ -243,7 +243,7 @@ func TestPiLaunch(t *testing.T) {
 	if argIndex(spec.Args, "add pagination") < 0 {
 		t.Errorf("prompt not passed as argv: %v", spec.Args)
 	}
-	if !hasEnvKey(spec.Env, "PI_SKIP_VERSION_CHECK") || !hasEnvKey(spec.Env, "XANAX_HOOK_SOCKET") {
+	if !hasEnvKey(spec.Env, "PI_SKIP_VERSION_CHECK") || !hasEnvKey(spec.Env, "RVR_HOOK_SOCKET") {
 		t.Errorf("pi env missing expected keys: %v", spec.Env)
 	}
 	// The embedded hook must have been materialized.

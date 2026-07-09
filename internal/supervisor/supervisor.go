@@ -18,13 +18,13 @@ import (
 
 	"github.com/creack/pty"
 
-	"xanax/internal/adapter"
-	"xanax/internal/config"
-	"xanax/internal/notify"
-	"xanax/internal/ringbuf"
-	"xanax/internal/session"
-	"xanax/internal/store"
-	"xanax/internal/wire"
+	"rvr/internal/adapter"
+	"rvr/internal/config"
+	"rvr/internal/notify"
+	"rvr/internal/ringbuf"
+	"rvr/internal/session"
+	"rvr/internal/store"
+	"rvr/internal/wire"
 )
 
 const (

@@ -1,5 +1,5 @@
-// Package config resolves xanax configuration: built-in harness defaults
-// overlaid with the optional ~/.config/xanax/config.toml (SPEC.md §8).
+// Package config resolves rvr configuration: built-in harness defaults
+// overlaid with the optional ~/.config/rvr/config.toml (SPEC.md §8).
 package config
 
 import (
@@ -13,7 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"xanax/internal/session"
+	"rvr/internal/session"
 )
 
 // Adapter names accepted in harness configuration.
@@ -69,7 +69,7 @@ type Config struct {
 // CanResume reports whether a dead session can be relaunched: either a
 // harness-native session ref was captured (pi/opencode), or its harness has
 // resume_args configured (generic "continue last session in this repo"). This
-// is the single source of truth for both the `xanax resume` CLI path and the
+// is the single source of truth for both the `rvr resume` CLI path and the
 // dashboard's open-session action, so a terminal session (e.g. completed) that
 // resume can revive is never wrongly reported as unopenable.
 func (c *Config) CanResume(sess *session.Session) bool {
@@ -130,7 +130,7 @@ type KeyMap struct {
 	Open     Binding `toml:"open"`      // open the live session window
 	Remove   Binding `toml:"remove"`    // remove the session; live sessions confirm first
 	Resume   Binding `toml:"resume"`    // resume the session
-	Rename   Binding `toml:"rename"`    // rename its xanax label
+	Rename   Binding `toml:"rename"`    // rename its rvr label
 	Preview  Binding `toml:"preview"`   // toggle the screen peek
 	Filter   Binding `toml:"filter"`    // open the filter bar
 	Settings Binding `toml:"settings"`  // open the in-TUI keybindings editor
@@ -151,7 +151,7 @@ type KeyMap struct {
 	FormPrev Binding `toml:"form_prev"` // previous field
 }
 
-// Paths locates everything xanax reads or writes on disk (SPEC.md §7).
+// Paths locates everything rvr reads or writes on disk (SPEC.md §7).
 type Paths struct {
 	ConfigFile string
 	DataDir    string
@@ -175,13 +175,13 @@ func DefaultPaths() (Paths, error) {
 	if dataDir == "" {
 		dataDir = filepath.Join(home, ".local", "share")
 	}
-	data := filepath.Join(dataDir, "xanax")
+	data := filepath.Join(dataDir, "rvr")
 	return Paths{
-		ConfigFile: filepath.Join(cfgDir, "xanax", "config.toml"),
+		ConfigFile: filepath.Join(cfgDir, "rvr", "config.toml"),
 		DataDir:    data,
-		DBFile:     filepath.Join(data, "xanax.db"),
+		DBFile:     filepath.Join(data, "rvr.db"),
 		LogsDir:    filepath.Join(data, "logs"),
-		SocketDir:  filepath.Join("/tmp", fmt.Sprintf("xanax-%d", os.Getuid())),
+		SocketDir:  filepath.Join("/tmp", fmt.Sprintf("rvr-%d", os.Getuid())),
 	}, nil
 }
 
@@ -273,7 +273,7 @@ func (k KeyMap) Actions() []KeyAction {
 		{"open", "open the selected session's window", k.Open},
 		{"remove", "remove the session; confirms before killing live sessions", k.Remove},
 		{"resume", "resume the selected session", k.Resume},
-		{"rename", "rename the session's xanax label", k.Rename},
+		{"rename", "rename the session's rvr label", k.Rename},
 		{"preview", "toggle the screen peek", k.Preview},
 		{"filter", "filter the session list", k.Filter},
 		{"settings", "open this keybindings editor", k.Settings},

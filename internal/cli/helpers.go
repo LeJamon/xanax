@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"xanax/internal/attach"
-	"xanax/internal/config"
-	"xanax/internal/session"
-	"xanax/internal/store"
+	"rvr/internal/attach"
+	"rvr/internal/config"
+	"rvr/internal/session"
+	"rvr/internal/store"
 )
 
 // socketPath is the unix socket for a session's supervisor.
@@ -69,21 +69,21 @@ func (e *env) supervisorStartingError(id string, timeout time.Duration) error {
 func (e *env) sessionUnavailableError(st *store.Store, sess *session.Session) error {
 	if sess.Status.Terminal() {
 		if sess.Status == session.StatusFailed {
-			return fmt.Errorf("%s\nInspect raw output with: xanax logs %s",
+			return fmt.Errorf("%s\nInspect raw output with: rvr logs %s",
 				e.failureSummary(st, sess), shortID(sess.ID))
 		}
 		if e.canResume(sess) {
-			return fmt.Errorf("session %s has ended (%s); use `xanax resume %s`",
+			return fmt.Errorf("session %s has ended (%s); use `rvr resume %s`",
 				shortID(sess.ID), sess.Status, shortID(sess.ID))
 		}
-		return fmt.Errorf("session %s has ended (%s); inspect logs with `xanax logs %s`",
+		return fmt.Errorf("session %s has ended (%s); inspect logs with `rvr logs %s`",
 			shortID(sess.ID), sess.Status, shortID(sess.ID))
 	}
 	if e.canResume(sess) {
-		return fmt.Errorf("session %s is not reachable; use `xanax resume %s`",
+		return fmt.Errorf("session %s is not reachable; use `rvr resume %s`",
 			shortID(sess.ID), shortID(sess.ID))
 	}
-	return fmt.Errorf("session %s is not reachable; inspect logs with `xanax logs %s`\nSupervisor log: %s",
+	return fmt.Errorf("session %s is not reachable; inspect logs with `rvr logs %s`\nSupervisor log: %s",
 		shortID(sess.ID), shortID(sess.ID), e.supervisorLogPath(sess.ID))
 }
 
@@ -120,12 +120,12 @@ func failureDetail(st *store.Store, sess *session.Session) string {
 	return ""
 }
 
-// spawnSupervisor starts a detached `xanax _supervise <id>` process that
+// spawnSupervisor starts a detached `rvr _supervise <id>` process that
 // outlives this one (SPEC.md §3). It returns the supervisor pid.
 func (e *env) spawnSupervisor(id string, resume bool) (int, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return 0, fmt.Errorf("locate xanax binary: %w", err)
+		return 0, fmt.Errorf("locate rvr binary: %w", err)
 	}
 	if err := os.MkdirAll(e.paths.LogsDir, 0o700); err != nil {
 		return 0, err

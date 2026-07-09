@@ -5,8 +5,8 @@ import (
 	"os"
 	"sort"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"rvr/internal/config"
+	"rvr/internal/session"
 )
 
 // genericAdapter runs any CLI from configuration. It has no state channel, so

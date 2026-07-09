@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"xanax/internal/attach"
+	"rvr/internal/attach"
 )
 
 func newResumeCmd() *cobra.Command {

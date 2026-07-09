@@ -42,7 +42,7 @@ func newListCmd() *cobra.Command {
 				return enc.Encode(sessions)
 			}
 			if len(sessions) == 0 {
-				fmt.Fprintln(out, "No sessions. Start one with: xanax new \"your prompt\"")
+				fmt.Fprintln(out, "No sessions. Start one with: rvr new \"your prompt\"")
 				return nil
 			}
 			w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)

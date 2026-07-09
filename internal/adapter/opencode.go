@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"rvr/internal/config"
+	"rvr/internal/session"
 )
 
 // errAuth signals that the opencode server rejected our unauthenticated

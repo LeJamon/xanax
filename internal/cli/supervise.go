@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"xanax/internal/supervisor"
+	"rvr/internal/supervisor"
 )
 
 func newSuperviseCmd() *cobra.Command {

@@ -4,8 +4,8 @@ import (
 	"net"
 	"sync"
 
-	"xanax/internal/ringbuf"
-	"xanax/internal/wire"
+	"rvr/internal/ringbuf"
+	"rvr/internal/wire"
 )
 
 const (

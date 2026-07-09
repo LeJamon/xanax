@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"xanax/internal/config"
+	"rvr/internal/config"
 )
 
 // TestSetKeyBindingInConfig covers the config writer: appending a [keys] table
