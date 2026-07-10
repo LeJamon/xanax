@@ -174,3 +174,7 @@ go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 Release tags matching `v*` are built through GoReleaser. Run `goreleaser check`
 before changing release configuration.
+
+## License
+
+[MIT](LICENSE) © 2026 Hussenet Thomas and contributors.
