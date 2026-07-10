@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"xanax/internal/session"
-	"xanax/internal/store"
+	"rvr/internal/session"
+	"rvr/internal/store"
 )
 
 func openTemp(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "xanax.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "rvr.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestListSessionsNewestFirst(t *testing.T) {
 
 func TestReopenAppliesMigrationsOnce(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "xanax.db")
+	path := filepath.Join(dir, "rvr.db")
 	st1, err := store.Open(path)
 	if err != nil {
 		t.Fatalf("first Open: %v", err)

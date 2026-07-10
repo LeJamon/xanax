@@ -3,9 +3,9 @@ package cli
 import (
 	"log/slog"
 
-	"xanax/internal/attach"
-	"xanax/internal/session"
-	"xanax/internal/store"
+	"rvr/internal/attach"
+	"rvr/internal/session"
+	"rvr/internal/store"
 )
 
 // reconcile brings the store in line with reality and, when auto_resume is on,

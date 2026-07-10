@@ -1,12 +1,12 @@
-# xanax
+# rvr
 
 A terminal-first session manager for autonomous AI coding agents — `tmux + htop`
-for harnesses like **opencode**, **pi**, and **codex**. xanax launches agents,
+for harnesses like **opencode**, **pi**, and **codex**. rvr launches agents,
 supervises them so they keep running after you close the UI, and gives you one
 dashboard to attach, monitor, and manage them regardless of which harness is
 doing the work.
 
-xanax is **not** an agent framework: no planning, prompting, memory, or tools. That
+rvr is **not** an agent framework: no planning, prompting, memory, or tools. That
 stays the harness's job. See [`SPEC.md`](SPEC.md) for the full v1 design.
 
 ## Status
@@ -20,7 +20,7 @@ adapters for opencode and pi are implemented against their current APIs (see
 Requires Go 1.24+.
 
 ```sh
-go build -o xanax ./cmd/xanax
+go build -o rvr ./cmd/rvr
 ```
 
 Runs on macOS and Linux.
@@ -28,16 +28,16 @@ Runs on macOS and Linux.
 ## Usage
 
 ```sh
-xanax                                    # dashboard: all sessions
-xanax ~/code/api                         # dashboard scoped to one path
-xanax new --harness opencode "fix the failing tests"
-xanax new --harness pi --repo ~/code/api "add pagination"
-xanax list [--json]
-xanax attach <id>                        # reattach to a live session
-xanax resume <id>                        # reattach, or relaunch a dead one natively
-xanax kill   <id>
-xanax logs   <id> [-f]                   # print (or follow) a session's raw output
-xanax config                             # print resolved config + paths
+rvr                                    # dashboard: all sessions
+rvr ~/code/api                         # dashboard scoped to one path
+rvr new --harness opencode "fix the failing tests"
+rvr new --harness pi --repo ~/code/api "add pagination"
+rvr list [--json]
+rvr attach <id>                        # reattach to a live session
+rvr resume <id>                        # reattach, or relaunch a dead one natively
+rvr kill   <id>
+rvr logs   <id> [-f]                   # print (or follow) a session's raw output
+rvr config                             # print resolved config + paths
 ```
 
 Given a path, the dashboard shows only sessions under it and launches new ones there.
@@ -58,22 +58,22 @@ the prompt box. The selected row is framed with accent-colored top/bottom rules.
 - **A session selected:** `→`/`Enter` open its window · `space` toggle a live peek ·
   `e` rename · `r` resume · `Ctrl+K` remove (`Ctrl+K` again for live sessions) ·
   `/` filter · `↓`/`j` back to the prompt box · `Ctrl+C` quit. (Rename is a
-  xanax-only label; it never touches the harness's own session.) The peek shows
+  rvr-only label; it never touches the harness's own session.) The peek shows
   the session's current screen in a pane above the prompt and closes when the
   selection moves; each row shows its live git branch (and open PR number, via
   `gh`) on the right.
 - **Session window:** opening a session drops you into the harness's own live TUI (the
   conversation). Press **Left arrow** (or `ctrl+\`) to detach — the session keeps
   running in the background; **Right arrow** from the list opens it. (Left/right are
-  intercepted by xanax as back/into, so they aren't sent to the harness.)
+  intercepted by rvr as back/into, so they aren't sent to the harness.)
 
-Sessions survive closing the dashboard and even a reboot: on the next launch, xanax
+Sessions survive closing the dashboard and even a reboot: on the next launch, rvr
 auto-resumes interrupted sessions via the harness's native resume (like Claude
 Code's background agents).
 
 ## Configuration
 
-Optional, at `~/.config/xanax/config.toml`. opencode, pi, and codex work with no
+Optional, at `~/.config/rvr/config.toml`. opencode, pi, and codex work with no
 config.
 
 ```toml
@@ -101,7 +101,7 @@ resume_args       = ["resume", "--last"]  # reattach to the most recent session
 idle_timeout      = 120                   # no native state; mark "waiting" when idle
 
 # Optional TUI colors — ANSI palette index ("0"–"255") or hex ("#rgb"/"#rrggbb").
-# Any omitted field keeps its default; see `xanax config` for the full set.
+# Any omitted field keeps its default; see `rvr config` for the full set.
 [theme]
 accent    = "13"   # selection / cursor
 muted     = "250"  # secondary text and rules
@@ -123,7 +123,7 @@ resume_args = ["session", "--resume"]    # resume the most recent session
 ## Layout
 
 ```
-cmd/xanax            entrypoint
+cmd/rvr            entrypoint
 internal/cli         cobra commands + dashboard wiring
 internal/config      config + XDG paths
 internal/session     domain types + state model

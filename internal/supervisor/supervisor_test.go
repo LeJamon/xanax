@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
-	"xanax/internal/store"
-	"xanax/internal/supervisor"
-	"xanax/internal/wire"
+	"rvr/internal/config"
+	"rvr/internal/session"
+	"rvr/internal/store"
+	"rvr/internal/supervisor"
+	"rvr/internal/wire"
 )
 
 func testPaths(t *testing.T) config.Paths {
@@ -28,7 +28,7 @@ func testPaths(t *testing.T) config.Paths {
 	t.Cleanup(func() { os.RemoveAll(sockDir) })
 	return config.Paths{
 		DataDir:   data,
-		DBFile:    filepath.Join(data, "xanax.db"),
+		DBFile:    filepath.Join(data, "rvr.db"),
 		LogsDir:   filepath.Join(data, "logs"),
 		SocketDir: sockDir,
 	}
@@ -66,7 +66,7 @@ func TestSupervisorAttachAndKill(t *testing.T) {
 		Title:         "kill test",
 		RepoPath:      t.TempDir(),
 		Harness:       "generic",
-		InitialPrompt: "XANAXPROBE",
+		InitialPrompt: "RVRPROBE",
 		Status:        session.StatusStarting,
 	}
 	if err := st.CreateSession(sess); err != nil {
@@ -104,7 +104,7 @@ func TestSupervisorAttachAndKill(t *testing.T) {
 		}
 		switch f.Type {
 		case wire.TypeOutput:
-			if bytes.Contains(f.Payload, []byte("XANAXPROBE")) {
+			if bytes.Contains(f.Payload, []byte("RVRPROBE")) {
 				sawPrompt = true
 				// Now that we've seen output, request a kill.
 				wire.WriteJSON(conn, wire.TypeKill, struct{}{})

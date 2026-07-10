@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
-	"xanax/internal/store"
+	"rvr/internal/config"
+	"rvr/internal/session"
+	"rvr/internal/store"
 )
 
 func TestCanResume(t *testing.T) {
@@ -39,13 +39,13 @@ func TestCanResume(t *testing.T) {
 }
 
 func TestCheckHarnessCommandMissing(t *testing.T) {
-	e := &env{paths: config.Paths{ConfigFile: "/tmp/xanax-config.toml"}}
-	err := e.checkHarnessCommand("opencode", config.Harness{Command: "xanax-definitely-missing-command"})
+	e := &env{paths: config.Paths{ConfigFile: "/tmp/rvr-config.toml"}}
+	err := e.checkHarnessCommand("opencode", config.Harness{Command: "rvr-definitely-missing-command"})
 	if err == nil {
 		t.Fatal("checkHarnessCommand succeeded for a missing command")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, `harness "opencode" command "xanax-definitely-missing-command" is not available`) {
+	if !strings.Contains(msg, `harness "opencode" command "rvr-definitely-missing-command" is not available`) {
 		t.Fatalf("error did not name the missing harness command: %v", err)
 	}
 	if !strings.Contains(msg, "[harness.opencode].command") || !strings.Contains(msg, e.paths.ConfigFile) {
@@ -58,7 +58,7 @@ func TestCheckHarnessCommandAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{paths: config.Paths{ConfigFile: "/tmp/xanax-config.toml"}}
+	e := &env{paths: config.Paths{ConfigFile: "/tmp/rvr-config.toml"}}
 	if err := e.checkHarnessCommand("test", config.Harness{Command: exe}); err != nil {
 		t.Fatalf("checkHarnessCommand rejected executable test binary: %v", err)
 	}
@@ -66,13 +66,13 @@ func TestCheckHarnessCommandAvailable(t *testing.T) {
 
 func TestFailureSummaryUsesStatusDetail(t *testing.T) {
 	st, sess := failedSession(t, "start harness failed: exec: opencode: not found")
-	e := &env{paths: config.Paths{LogsDir: "/tmp/xanax-logs"}}
+	e := &env{paths: config.Paths{LogsDir: "/tmp/rvr-logs"}}
 
 	got := e.failureSummary(st, sess)
 	if !strings.Contains(got, "start harness failed: exec: opencode: not found") {
 		t.Fatalf("summary missing status detail: %q", got)
 	}
-	if !strings.Contains(got, "/tmp/xanax-logs/"+sess.ID+".supervisor.log") {
+	if !strings.Contains(got, "/tmp/rvr-logs/"+sess.ID+".supervisor.log") {
 		t.Fatalf("summary missing supervisor log path: %q", got)
 	}
 }
@@ -90,7 +90,7 @@ func TestFailureDetailFallsBackToErrorEvent(t *testing.T) {
 
 func failedSession(t *testing.T, detail string) (*store.Store, *session.Session) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "xanax.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "rvr.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"xanax/internal/session"
+	"rvr/internal/session"
 )
 
 // lineWidths returns the rendered (ANSI-aware) width of each line in s.
@@ -41,7 +41,7 @@ func countsLineIndex(header string) int {
 func TestViewNoLineExceedsWidth(t *testing.T) {
 	m := newTestModel(sampleSessions())
 	m.width, m.height = 80, 24
-	m.path = "~/very/deeply/nested/working/directory/that/is/quite/long/indeed/xanax"
+	m.path = "~/very/deeply/nested/working/directory/that/is/quite/long/indeed/rvr"
 	m.filter = "some-long-filter-string-that-eats-columns"
 	m.err = errors.New(`launch failed: exec: "claude": executable file not found in $PATH`)
 

@@ -15,16 +15,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
-	"xanax/internal/store"
+	"rvr/internal/config"
+	"rvr/internal/session"
+	"rvr/internal/store"
 )
 
 func newTestModel(sessions []*session.Session) model {
 	cfg := config.Default()
 	grp := grouped(sessions)
 	m := model{
-		deps:          Deps{Cfg: cfg, SocketDir: "/tmp/xanax-nonexistent-test"},
+		deps:          Deps{Cfg: cfg, SocketDir: "/tmp/rvr-nonexistent-test"},
 		composer:      textarea.New(),
 		renameInput:   textinput.New(),
 		filterInput:   textinput.New(),
@@ -956,7 +956,7 @@ func TestEmptyFilteredListArrowsKeepEscAvailable(t *testing.T) {
 func TestViewRendersWithoutPanic(t *testing.T) {
 	m := newTestModel(sampleSessions())
 	out := m.View()
-	if !strings.Contains(out, "xanax") {
+	if !strings.Contains(out, "rvr") {
 		t.Error("view missing header")
 	}
 	if !strings.Contains(out, "Needs input") {
@@ -1001,7 +1001,7 @@ func TestViewWindowsLongSessionListToTerminalHeight(t *testing.T) {
 	if h := lipgloss.Height(out); h != m.height {
 		t.Fatalf("view height = %d, want %d", h, m.height)
 	}
-	for _, want := range []string{"xanax", "session 20", "more sessions above", "more sessions below"} {
+	for _, want := range []string{"rvr", "session 20", "more sessions above", "more sessions below"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("long-list view missing %q:\n%s", want, plain)
 		}

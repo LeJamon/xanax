@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"rvr/internal/config"
+	"rvr/internal/session"
 )
 
 func TestNewInfererDisabledWhenUnconfigured(t *testing.T) {

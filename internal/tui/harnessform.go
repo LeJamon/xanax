@@ -13,7 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"xanax/internal/config"
+	"rvr/internal/config"
 )
 
 // The add-harness form fields, in order.

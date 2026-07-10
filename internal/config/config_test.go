@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"rvr/internal/config"
+	"rvr/internal/session"
 )
 
 func writeConfig(t *testing.T, content string) string {
@@ -431,7 +431,7 @@ func TestLoadRejectsEmptyKeyBinding(t *testing.T) {
 	}
 }
 
-// CanResume is the shared gate for `xanax resume` and the dashboard's open
+// CanResume is the shared gate for `rvr resume` and the dashboard's open
 // action. The "generic with resume_args" case is the regression that mattered:
 // generic harnesses never capture a session ref, so a completed session has an
 // empty ref yet must still be openable via its configured resume_args.

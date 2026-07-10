@@ -1,8 +1,8 @@
 package supervisor
 
 import (
-	"xanax/internal/adapter"
-	"xanax/internal/session"
+	"rvr/internal/adapter"
+	"rvr/internal/session"
 )
 
 // mapState maps a normalized adapter state event to a session status and

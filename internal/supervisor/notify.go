@@ -1,6 +1,6 @@
 package supervisor
 
-import "xanax/internal/session"
+import "rvr/internal/session"
 
 // notifyEvent describes a desktop notification to raise.
 type notifyEvent struct {

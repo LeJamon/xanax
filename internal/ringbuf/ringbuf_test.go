@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"xanax/internal/ringbuf"
+	"rvr/internal/ringbuf"
 )
 
 func TestUnderCapacity(t *testing.T) {

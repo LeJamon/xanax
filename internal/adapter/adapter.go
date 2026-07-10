@@ -1,4 +1,4 @@
-// Package adapter translates xanax session commands into harness-specific
+// Package adapter translates rvr session commands into harness-specific
 // behavior. Adapters own how a harness is launched, how the initial prompt is
 // delivered, and how running/waiting state is observed (SPEC.md §5). They do
 // no prompting, planning, or memory work themselves.
@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"time"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"rvr/internal/config"
+	"rvr/internal/session"
 )
 
 // StateKind is a normalized agent state, harness-agnostic.

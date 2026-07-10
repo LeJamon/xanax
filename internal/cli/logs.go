@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"xanax/internal/session"
+	"rvr/internal/session"
 )
 
 func newLogsCmd() *cobra.Command {

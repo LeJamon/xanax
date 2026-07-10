@@ -14,7 +14,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"xanax/internal/session"
+	"rvr/internal/session"
 )
 
 var (
@@ -112,7 +112,7 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if version > len(migrations) {
-		return fmt.Errorf("database schema version %d is newer than this xanax build (max %d)", version, len(migrations))
+		return fmt.Errorf("database schema version %d is newer than this rvr build (max %d)", version, len(migrations))
 	}
 	for i := version; i < len(migrations); i++ {
 		tx, err := s.db.Begin()
@@ -259,7 +259,7 @@ func (s *Store) SetRuntime(id string, pid int, socketPath string, status session
 	)
 }
 
-// SetTitle renames a session. The title is xanax's UI label only; it does not
+// SetTitle renames a session. The title is rvr's UI label only; it does not
 // touch the harness's own session.
 func (s *Store) SetTitle(id, title string) error {
 	return s.exec1(id,

@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"time"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"rvr/internal/config"
+	"rvr/internal/session"
 )
 
 // inferer approximates agent state for a harness that exposes no native state

@@ -8,8 +8,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"rvr/internal/config"
+	"rvr/internal/session"
 )
 
 // pickerModalWidth returns the modal's content width (the columns between the
@@ -310,7 +310,7 @@ func (m model) renderPreview() string {
 	return label + "\n" + hRules(colMuted, m.width).Render(body)
 }
 
-// pill is the xanax logo: a small rounded capsule ("pink pill") whose three
+// pill is the rvr logo: a small rounded capsule ("pink pill") whose three
 // rows sit to the left of the three-line title/path/counts block, mirroring the
 // masthead layout. Colored with the accent (pink/magenta by default).
 const pill = "▟█████▙\n" +
@@ -320,7 +320,7 @@ const pill = "▟█████▙\n" +
 func (m model) header() string {
 	logo := lipgloss.NewStyle().Foreground(colAccent).Render(pill)
 
-	title := titleStyle.Render("xanax")
+	title := titleStyle.Render("rvr")
 	if m.deps.Version != "" {
 		title += mutedStyle.Render(" v" + m.deps.Version)
 	}
@@ -681,7 +681,7 @@ func (m model) footer() string {
 	k := m.keys()
 	// A pending quit confirmation takes over the footer with a caution prompt.
 	if m.confirmQuit {
-		return warnStyle.Render("Press " + keyHint(k.Quit) + " again to exit xanax")
+		return warnStyle.Render("Press " + keyHint(k.Quit) + " again to exit rvr")
 	}
 	if m.confirmRemoveID != "" {
 		return warnStyle.Render("Press " + keyHint(k.Remove) + " again to kill and remove " + shortID(m.confirmRemoveID))
