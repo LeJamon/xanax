@@ -57,14 +57,16 @@ harness versions we test against** and degrade gracefully on mismatch.
 - Sessions are JSONL trees under `~/.pi/agent/sessions/--<cwd-with-dashes>--/`;
   resume with `pi --session <path|id>`, `-c` for most recent in cwd.
 - **Escape is bound to "interrupt agent"**; most ctrl-keys are taken by emacs-style
-  editing bindings. `ctrl+\` appears free in both harnesses.
+  editing bindings. `ctrl+q` is free in the supported harness defaults and works on
+  QWERTY and AZERTY layouts.
 - Useful env: `PI_SKIP_VERSION_CHECK=1`, `PI_CODING_AGENT_DIR`, settings
   `quietStartup`. Exit codes undocumented.
 
 **Consequences:**
 1. The original spec's "Escape returns to dashboard" is impossible — Escape interrupts
-   the agent in both TUIs. The dashboard uses arrow-key navigation; inside a session,
-   unmodified Left or the configurable **`ctrl+\`** detach gesture returns to it (§10).
+   the agent in both TUIs. rvr uses **arrow-key navigation** for its own chrome and
+   reserves passthrough-exit for a key the supported harnesses leave free,
+   **`ctrl+q`** (§10).
 2. Terminal-output regex scraping would fight full-screen TUI escape sequences;
    both harnesses offer better channels — hence D1.
 3. `completed` vs `failed` cannot rest on exit codes; the state channel and
@@ -154,11 +156,11 @@ Unix socket server ──► attach / input / resize / subscribe / kill / info
     harness starts before any client attaches, the supervisor answers these itself
     while no client is connected; once a client attaches, its real terminal answers and
     the supervisor stays quiet (no double replies).
-- **Detach trigger.** The attach client detaches on `ctrl+\` (configurable
+- **Detach trigger.** The attach client detaches on `ctrl+q` (configurable
   `interact_exit_key`). The trigger is recognized in the raw control-byte form and,
-  under the Kitty disambiguate flag, its `CSI u` form (`ctrl+\` → `ESC[92;5u`). Every
-  other key, including arrows, Escape, and pasted terminal control sequences, is
-  forwarded to the harness.
+  under the Kitty disambiguate flag, its `CSI u` form (`ctrl+q` → `ESC[113;5u`),
+  including alternate-layout metadata. Every other key, including arrows, Escape,
+  and pasted terminal control sequences, is forwarded to the harness.
 
 ## 5. Adapter architecture
 
@@ -335,7 +337,8 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 default_harness   = "opencode"
 auto_resume       = true         # revive interrupted sessions on launch (§6)
 notifications     = true         # desktop notifications on needs-input/completed/failed
-interact_exit_key = "ctrl+\\"    # step out of raw passthrough back to navigate mode (§10)
+interact_exit_key = "ctrl+q"     # step out of raw passthrough back to navigate mode (§10)
+                                 # arrows/Escape are reserved by the harness TUIs
 
 # TUI colors — ANSI palette index ("0"–"255") or hex ("#rgb"/"#rrggbb"); omitted
 # fields keep their defaults. Full set: accent, waiting, running, completed,
@@ -481,18 +484,19 @@ Opening a session enters a raw passthrough to the agent's own
 full-screen TUI — the "conversation window". This is where you *see and drive*
 opencode/pi; rvr supervises and proxies the PTY but never interprets the screen.
 On entry it replays the ring buffer and forces a SIGWINCH repaint, then proxies
-transparently. Escape, modified arrows, and the agent's editing and leader
-bindings reach the harness unmodified. Unmodified Left is rvr's back gesture;
-the configurable **`ctrl+\`** is the alternative detach key.
+transparently. Every key — arrows, Escape, the agent's editing and leader bindings —
+reaches the harness unmodified, so the agent stays fully usable. Because the
+passthrough is total, stepping back out needs a key neither harness binds:
+**`ctrl+q`** (configurable `interact_exit_key`) detaches.
 
 The dashboard enters interact mode by shelling out to `rvr attach <id>` via Bubble
 Tea's process exec, so the attach client owns the whole terminal and hands it back
-cleanly on `ctrl+\` — no input reader leaks back into the dashboard. If the
+cleanly on `ctrl+q` — no input reader leaks back into the dashboard. If the session's
 supervisor is gone because the session reached a terminal state, opening it shows a
 read-only rendered excerpt of the stored raw log. Explicit `r` / `rvr resume`
 keeps the native relaunch path for resumable terminal sessions.
 
-`rvr attach <id>` from a plain shell is the same client, standalone; `ctrl+\`
+`rvr attach <id>` from a plain shell is the same client, standalone; `ctrl+q`
 detaches and exits the process.
 
 This keeps rvr's chrome (composer + list) from ever stealing keys from the agent

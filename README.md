@@ -76,7 +76,7 @@ the prompt box. The selected row is framed with accent-colored top/bottom rules.
   selection moves; each row shows its live git branch (and open PR number, via
   `gh`) on the right.
 - **Session window:** opening a session drops you into the harness's own live TUI (the
-  conversation). Press **`ctrl+\`** to detach — the session keeps running in the
+  conversation). Press **`ctrl+q`** by default to detach — the session keeps running in the
   background; **Right arrow** from the list opens it. Every harness key, including
   arrows, is forwarded while attached.
 
@@ -108,7 +108,7 @@ config.
 default_harness   = "opencode"
 auto_resume       = true
 notifications     = true
-interact_exit_key = "ctrl+\\"
+interact_exit_key = "ctrl+q"
 
 [harness.opencode]
 adapter = "opencode"

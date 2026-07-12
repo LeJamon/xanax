@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/LeJamon/rvr/internal/attach"
 	"github.com/LeJamon/rvr/internal/session"
 )
 
@@ -192,7 +193,7 @@ func DefaultPaths() (Paths, error) {
 func Default() *Config {
 	return &Config{
 		DefaultHarness:  "opencode",
-		InteractExitKey: `ctrl+\`,
+		InteractExitKey: "ctrl+q",
 		AutoResume:      true,
 		Notifications:   true,
 		Theme:           DefaultTheme(),
@@ -470,6 +471,9 @@ func Load(path string) (*Config, error) {
 func (c *Config) validate() error {
 	if _, ok := c.Harnesses[c.DefaultHarness]; !ok {
 		return fmt.Errorf("default_harness %q is not a configured harness", c.DefaultHarness)
+	}
+	if _, err := attach.ParseExitKey(c.InteractExitKey); err != nil {
+		return err
 	}
 	for name, h := range c.Harnesses {
 		switch h.Adapter {

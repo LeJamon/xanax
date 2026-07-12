@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -31,8 +32,8 @@ func TestLoadDefaultsWhenFileMissing(t *testing.T) {
 	if !cfg.AutoResume {
 		t.Error("AutoResume = false, want true by default")
 	}
-	if cfg.InteractExitKey != `ctrl+\` {
-		t.Errorf("InteractExitKey = %q, want ctrl+\\", cfg.InteractExitKey)
+	if cfg.InteractExitKey != "ctrl+q" {
+		t.Errorf("InteractExitKey = %q, want ctrl+q", cfg.InteractExitKey)
 	}
 	if got := cfg.Harnesses["opencode"].Adapter; got != config.AdapterOpencode {
 		t.Errorf("opencode adapter = %q, want %q", got, config.AdapterOpencode)
@@ -84,7 +85,7 @@ command = "/opt/codex/bin/codex"
 	if cfg.AutoResume {
 		t.Error("AutoResume = true, want false from file")
 	}
-	if cfg.InteractExitKey != `ctrl+\` {
+	if cfg.InteractExitKey != "ctrl+q" {
 		t.Errorf("InteractExitKey = %q, want default preserved", cfg.InteractExitKey)
 	}
 
@@ -284,6 +285,45 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 	_, err := config.Load(path)
 	if err == nil || !strings.Contains(err.Error(), "unknown key") {
 		t.Fatalf("want unknown-key error, got %v", err)
+	}
+}
+
+func TestLoadAcceptsValidInteractExitKey(t *testing.T) {
+	for _, spec := range []string{`ctrl+\`, "q"} {
+		t.Run(spec, func(t *testing.T) {
+			path := writeConfig(t, "interact_exit_key = "+strconv.Quote(spec)+"\n")
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.InteractExitKey != spec {
+				t.Fatalf("InteractExitKey = %q, want %q", cfg.InteractExitKey, spec)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidInteractExitKey(t *testing.T) {
+	for _, tc := range []struct {
+		spec string
+		want string
+	}{
+		{"ctrl+&", "interact_exit_key"},
+		{"ctrl+space", "interact_exit_key"},
+		{"F12", "interact_exit_key"},
+		{"super+F12", "interact_exit_key"},
+		{"ctrl+m", "Enter"},
+		{"ctrl+j", "Enter"},
+		{"ctrl+i", "Tab"},
+		{"ctrl+h", "Backspace"},
+	} {
+		t.Run(tc.spec, func(t *testing.T) {
+			path := writeConfig(t, "interact_exit_key = "+strconv.Quote(tc.spec)+"\n")
+			_, err := config.Load(path)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("interact_exit_key=%q: want error containing %q, got %v", tc.spec, tc.want, err)
+			}
+		})
 	}
 }
 

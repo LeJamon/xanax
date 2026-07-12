@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestInteractiveCommandHelpMentionsDetachKeys(t *testing.T) {
+func TestInteractiveCommandHelpMentionsDetachKey(t *testing.T) {
 	tests := []struct {
 		name string
 		cmd  *cobra.Command
@@ -21,9 +21,14 @@ func TestInteractiveCommandHelpMentionsDetachKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			help := commandHelp(t, tt.cmd)
-			for _, want := range []string{"Left arrow", `ctrl+\`, "keeps running"} {
+			for _, want := range []string{"configured detach key", "ctrl+q", "keeps running"} {
 				if !strings.Contains(help, want) {
 					t.Fatalf("%s help missing %q:\n%s", tt.name, want, help)
+				}
+			}
+			for _, stale := range []string{"Left arrow", `ctrl+\`} {
+				if strings.Contains(help, stale) {
+					t.Fatalf("%s help contains stale detach key %q:\n%s", tt.name, stale, help)
 				}
 			}
 		})

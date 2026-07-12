@@ -32,8 +32,8 @@ With no prompt, rvr starts a fresh interactive harness. Multiple prompt
 arguments are joined with spaces. Use "-" as the only prompt argument to read
 the prompt from stdin.
 
-When rvr attaches to the new session, press Left arrow or the configured detach
-key (ctrl+\ by default). The session keeps running after you detach.`,
+When rvr attaches to the new session, press the configured detach key (ctrl+q
+by default). The session keeps running after you detach.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			prompt, err := promptFromNewArgs(cmd, args)
@@ -145,9 +145,13 @@ func trimFinalLineBreak(s string) string {
 
 // runAttach connects to a live session and proxies the terminal.
 func runAttach(e *env, id string) error {
+	exitKey, err := attach.ParseExitKey(e.cfg.InteractExitKey)
+	if err != nil {
+		return err
+	}
 	res, err := attach.Run(attach.Options{
 		SocketPath: e.socketPath(id),
-		ExitKey:    attach.ParseExitKey(e.cfg.InteractExitKey),
+		ExitKey:    exitKey,
 	})
 	attach.ReportResult(res)
 	if err != nil {

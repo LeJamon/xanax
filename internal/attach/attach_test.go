@@ -5,8 +5,11 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 
 	"github.com/LeJamon/rvr/internal/wire"
 )
@@ -83,7 +86,7 @@ func runAttachTest(t *testing.T) ([]byte, Result) {
 	}()
 
 	time.Sleep(200 * time.Millisecond)
-	inW.Write([]byte{0x1c}) // ctrl+\ -> detach
+	inW.Write([]byte{defaultExitKey}) // ctrl+q -> detach
 
 	var res Result
 	select {
@@ -147,7 +150,7 @@ func TestRunForwardsLeftArrow(t *testing.T) {
 				resCh <- res
 			}()
 
-			input := append(append([]byte(nil), tc.left...), byte(0x1c))
+			input := append(append([]byte(nil), tc.left...), defaultExitKey)
 			if _, err := inW.Write(input); err != nil {
 				t.Fatal(err)
 			}
@@ -197,7 +200,7 @@ func TestResetModesDisablesHarnessInputModes(t *testing.T) {
 }
 
 func TestFindDetach(t *testing.T) {
-	const exit = 0x1c // ctrl+\
+	const exit = defaultExitKey // ctrl+q
 	cases := []struct {
 		name    string
 		data    []byte
@@ -239,26 +242,176 @@ func TestFindDetach(t *testing.T) {
 		// Partial sequence at a read boundary: no match; the prefix is forwarded
 		// and the detach is missed (an accepted limitation).
 		{"partial kitty csi", []byte{0x1b, '[', '1', ';'}, -1, 0},
-		// Exit key (ctrl+\) under the Kitty protocol: the disambiguate flag
-		// encodes it as a CSI-u sequence (ESC[92;5u, codepoint 92 = '\', mod 5 =
-		// 1+ctrl) instead of the raw 0x1c byte, so a raw scan alone would miss it.
-		{"kitty exit key csi-u", []byte{0x1b, '[', '9', '2', ';', '5', 'u'}, 0, 7},
-		{"kitty exit key csi-u after text", append([]byte("hi"), 0x1b, '[', '9', '2', ';', '5', 'u'), 2, 7},
-		{"kitty exit key csi-u explicit press", []byte{0x1b, '[', '9', '2', ';', '5', ':', '1', 'u'}, 0, 9},
-		{"kitty exit key csi-u release is not detach", []byte{0x1b, '[', '9', '2', ';', '5', ':', '3', 'u'}, -1, 0},
+		// Exit key (ctrl+q) under the Kitty protocol: the disambiguate flag
+		// encodes it as a CSI-u sequence (ESC[113;5u, codepoint 113 = 'q', mod 5 =
+		// 1+ctrl) instead of the raw 0x11 byte, so a raw scan alone would miss it.
+		{"kitty exit key csi-u", []byte("\x1b[113;5u"), 0, 8},
+		{"kitty exit key csi-u after text", append([]byte("hi"), []byte("\x1b[113;5u")...), 2, 8},
+		{"kitty exit key csi-u explicit press", []byte("\x1b[113;5:1u"), 0, 10},
+		{"kitty exit key csi-u release is not detach", []byte("\x1b[113;5:3u"), -1, 0},
+		{"kitty exit key csi-u repeat is not detach", []byte("\x1b[113;5:2u"), -1, 0},
 		// Ctrl held alongside num lock (mod 133 = 1+ctrl+num_lock) still detaches.
-		{"kitty exit key csi-u with num lock", []byte{0x1b, '[', '9', '2', ';', '1', '3', '3', 'u'}, 0, 9},
-		// Backslash without ctrl (mod 1) is a literal key, not the exit chord.
-		{"kitty backslash without ctrl is not detach", []byte{0x1b, '[', '9', '2', ';', '1', 'u'}, -1, 0},
-		{"kitty backslash report-all-keys is not detach", []byte{0x1b, '[', '9', '2', 'u'}, -1, 0},
-		// A different ctrl chord (ctrl+a = ESC[97;5u) is not the exit ctrl+\.
-		{"kitty other ctrl chord is not detach", []byte{0x1b, '[', '9', '7', ';', '5', 'u'}, -1, 0},
+		{"kitty exit key csi-u with num lock", []byte("\x1b[113;133u"), 0, 10},
+		{"kitty exit key csi-u with caps lock", []byte("\x1b[113;69u"), 0, 9},
+		// Alternate-key reporting adds the base-layout key. On AZERTY the Q key
+		// can therefore arrive with q as the primary codepoint and a as its base.
+		{"kitty exit key csi-u with AZERTY base key", []byte("\x1b[113::97;5u"), 0, 12},
+		{"kitty q without ctrl is not detach", []byte("\x1b[113;1u"), -1, 0},
+		{"kitty q report-all-keys is not detach", []byte("\x1b[113u"), -1, 0},
+		{"kitty ctrl+shift+q is not detach", []byte("\x1b[113:81;6u"), -1, 0},
+		{"kitty ctrl+alt+q is not detach", []byte("\x1b[113;7u"), -1, 0},
+		{"kitty AZERTY ctrl+a is not ctrl+q", []byte("\x1b[97::113;5u"), -1, 0},
+		{"kitty overflowing codepoint is not detach", []byte("\x1b[999999999999999999999;5u"), -1, 0},
+		{"kitty ctrl+1 does not alias ctrl+q", []byte("\x1b[49;5u"), -1, 0},
+		{"kitty malformed alternate key is not detach", []byte("\x1b[113:;5u"), -1, 0},
+		{"old raw default is not detach", []byte{0x1c}, -1, 0},
+		{"old kitty default is not detach", []byte("\x1b[92;5u"), -1, 0},
+		// A different ctrl chord (ctrl+a = ESC[97;5u) is not ctrl+q.
+		{"kitty other ctrl chord is not detach", []byte("\x1b[97;5u"), -1, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			idx, length := findDetach(c.data, exit)
 			if idx != c.wantIdx || length != c.wantLen {
 				t.Errorf("findDetach(%v) = (%d,%d), want (%d,%d)", c.data, idx, length, c.wantIdx, c.wantLen)
+			}
+		})
+	}
+}
+
+func TestFindDetachPreservesConfiguredCtrlBackslash(t *testing.T) {
+	const ctrlBackslash = 0x1c
+	for _, tc := range []struct {
+		name string
+		data []byte
+		want int
+	}{
+		{"raw", []byte{ctrlBackslash}, 1},
+		{"kitty", []byte("\x1b[92;5u"), 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, length := findDetach(tc.data, ctrlBackslash)
+			if idx != 0 || length != tc.want {
+				t.Fatalf("findDetach(%v, ctrl+\\) = (%d, %d), want (0, %d)", tc.data, idx, length, tc.want)
+			}
+		})
+	}
+}
+
+func TestFindDetachHandlesConfiguredShiftedControlKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		key     byte
+		data    string
+		wantLen int
+	}{
+		{"ctrl+caret", 0x1e, "\x1b[54:94;6u", 10},
+		{"ctrl+caret without alternate metadata", 0x1e, "\x1b[54;6u", 7},
+		{"ctrl+caret with conflicting metadata", 0x1e, "\x1b[54:38;6u", 0},
+		{"ctrl+underscore", 0x1f, "\x1b[45:95;6u", 10},
+		{"ctrl+underscore without alternate metadata", 0x1f, "\x1b[45;6u", 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, length := findDetach([]byte(tc.data), tc.key)
+			if tc.wantLen == 0 {
+				if idx != -1 || length != 0 {
+					t.Fatalf("findDetach(%q) = (%d, %d), want no match", tc.data, idx, length)
+				}
+				return
+			}
+			if idx != 0 || length != tc.wantLen {
+				t.Fatalf("findDetach(%q) = (%d, %d), want (0, %d)", tc.data, idx, length, tc.wantLen)
+			}
+		})
+	}
+}
+
+func TestMakeRawDeliversCtrlQFromPTY(t *testing.T) {
+	master, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer tty.Close()
+
+	restore, err := makeRaw(tty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restore()
+	if _, err := master.Write([]byte{defaultExitKey}); err != nil {
+		t.Fatal(err)
+	}
+	type readResult struct {
+		value byte
+		err   error
+	}
+	resultCh := make(chan readResult, 1)
+	go func() {
+		var got [1]byte
+		_, err := tty.Read(got[:])
+		resultCh <- readResult{value: got[0], err: err}
+	}()
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if result.value != defaultExitKey {
+			t.Fatalf("raw PTY delivered %#x, want ctrl+q (%#x)", result.value, defaultExitKey)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ctrl+q was not delivered by the raw PTY")
+	}
+}
+
+func TestParseExitKey(t *testing.T) {
+	for _, tc := range []struct {
+		spec string
+		want byte
+	}{
+		{"ctrl+q", defaultExitKey},
+		{"q", defaultExitKey},
+		{`ctrl+\`, 0x1c},
+		{`\`, 0x1c},
+		{" ctrl+a ", 0x01},
+		{"CTRL+Z", 0x1a},
+		{"ctrl+]", 0x1d},
+		{"ctrl+^", 0x1e},
+		{"ctrl+_", 0x1f},
+	} {
+		t.Run(tc.spec, func(t *testing.T) {
+			got, err := ParseExitKey(tc.spec)
+			if err != nil {
+				t.Fatalf("ParseExitKey(%q): %v", tc.spec, err)
+			}
+			if got != tc.want {
+				t.Fatalf("ParseExitKey(%q) = %#x, want %#x", tc.spec, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseExitKeyRejectsInvalidAndUnsafeSpecs(t *testing.T) {
+	for _, tc := range []struct {
+		spec string
+		want string
+	}{
+		{"", "invalid"},
+		{"ctrl+&", "invalid"},
+		{"f12", "invalid"},
+		{"super+f12", "invalid"},
+		{"ctrl+space", "invalid"},
+		{"ctrl+[", "invalid"},
+		{"ctrl+m", "Enter"},
+		{"ctrl+j", "Enter"},
+		{"ctrl+i", "Tab"},
+		{"ctrl+h", "Backspace"},
+	} {
+		t.Run(tc.spec, func(t *testing.T) {
+			got, err := ParseExitKey(tc.spec)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ParseExitKey(%q) = %#x, %v; want error containing %q", tc.spec, got, err, tc.want)
 			}
 		})
 	}

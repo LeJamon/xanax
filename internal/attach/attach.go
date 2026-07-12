@@ -55,10 +55,12 @@ const (
 	Disconnected                // supervisor socket closed unexpectedly
 )
 
+const defaultExitKey byte = 0x11 // ctrl+q
+
 // Options configures an attach session.
 type Options struct {
 	SocketPath string
-	ExitKey    byte     // byte that detaches (default ctrl+\, 0x1c)
+	ExitKey    byte     // control byte that detaches (default ctrl+q, 0x11)
 	In         *os.File // defaults to os.Stdin
 	Out        *os.File // defaults to os.Stdout
 }
@@ -82,7 +84,7 @@ func runConnected(opts Options, conn net.Conn) (Result, error) {
 		opts.Out = os.Stdout
 	}
 	if opts.ExitKey == 0 {
-		opts.ExitKey = 0x1c
+		opts.ExitKey = defaultExitKey
 	}
 
 	restore, err := makeRaw(opts.In)
@@ -259,8 +261,8 @@ func findDetach(data []byte, exitKey byte) (idx, length int) {
 
 // exitKeyDetachLen reports the length of a Kitty keyboard-protocol CSI-u
 // encoding of the configured exit key at the start of data, or 0. Under the
-// disambiguate flag a control chord such as ctrl+\ arrives as "ESC [ 92 ; 5 u"
-// (codepoint ; 1+modifier bitmask) instead of the raw 0x1c byte the caller
+// disambiguate flag a control chord such as ctrl+q arrives as "ESC [ 113 ; 5 u"
+// (codepoint ; 1+modifier bitmask) instead of the raw 0x11 byte the caller
 // matches directly, so once a harness pushes the protocol the raw scan alone
 // misses it. Only control-byte exit keys are re-encoded this way; a printable
 // exit key keeps its literal byte.
@@ -271,8 +273,40 @@ func exitKeyDetachLen(data []byte, exitKey byte) int {
 	if len(data) < 4 || data[0] != 0x1b || data[1] != '[' {
 		return 0
 	}
-	cp, i, ok := parseCSIInt(data, 2)
-	if !ok || i >= len(data) || data[i] != ';' {
+	primary, i, ok := parseCSIInt(data, 2)
+	if !ok {
+		return 0
+	}
+	// Kitty can append the shifted and base-layout key codepoints to the
+	// primary codepoint. The configured chord names the logical character, so
+	// the primary stays authoritative (AZERTY ctrl+a must not become ctrl+q just
+	// because that key occupies Q's position on a QWERTY layout).
+	var shifted int
+	var hasShifted bool
+	if i < len(data) && data[i] == ':' {
+		i++
+		if i >= len(data) {
+			return 0
+		}
+		if data[i] == ':' { // omitted shifted key, followed by base-layout key
+			i++
+			if _, i, ok = parseCSIInt(data, i); !ok {
+				return 0
+			}
+		} else {
+			if shifted, i, ok = parseCSIInt(data, i); !ok {
+				return 0
+			}
+			hasShifted = true
+			if i < len(data) && data[i] == ':' {
+				i++
+				if _, i, ok = parseCSIInt(data, i); !ok {
+					return 0
+				}
+			}
+		}
+	}
+	if i >= len(data) || data[i] != ';' {
 		return 0
 	}
 	mods, i, ok := parseCSIInt(data, i+1)
@@ -288,49 +322,115 @@ func exitKeyDetachLen(data []byte, exitKey byte) int {
 	if i >= len(data) || data[i] != 'u' {
 		return 0
 	}
-	const ctrlBit = 0b100 // Kitty modifier bit for Ctrl
-	if mods < 1 || (mods-1)&ctrlBit == 0 || event != 1 {
-		return 0 // the exit key needs Ctrl held, on a press event
+	const (
+		shiftBit    = 0b00000001
+		ctrlBit     = 0b00000100
+		capsLockBit = 0b01000000
+		numLockBit  = 0b10000000
+	)
+	if mods < 1 || event != 1 {
+		return 0
 	}
-	// Ctrl+<cp> folds to a C0 control byte via cp&0x1f (matching ParseExitKey).
-	if cp > 0x7f || byte(cp)&0x1f != exitKey {
+	activeMods := mods - 1
+	if hasShifted && activeMods&shiftBit == 0 {
+		return 0 // a shifted alternate is valid only while Shift is held
+	}
+
+	expected := exitKeyCodepoint(exitKey)
+	directMatch := primary == expected
+	shiftedMatch := activeMods&shiftBit != 0 &&
+		(hasShifted && shifted == expected || !hasShifted && matchesUSShiftedControl(exitKey, primary))
+	allowedMods := ctrlBit | capsLockBit | numLockBit
+	if shiftedMatch && !directMatch {
+		allowedMods |= shiftBit
+	}
+	if activeMods&ctrlBit == 0 || activeMods & ^allowedMods != 0 || !directMatch && !shiftedMatch {
 		return 0
 	}
 	return i + 1
 }
 
+// matchesUSShiftedControl covers the two accepted control characters whose
+// common keys need Shift even when alternate-key reporting is not enabled.
+func matchesUSShiftedControl(exitKey byte, primary int) bool {
+	return exitKey == 0x1e && primary == '6' || // ctrl+^
+		exitKey == 0x1f && primary == '-' // ctrl+_
+}
+
+func exitKeyCodepoint(exitKey byte) int {
+	if exitKey >= 0x01 && exitKey <= 0x1a {
+		return int('a' + exitKey - 1)
+	}
+	switch exitKey {
+	case 0x1c:
+		return '\\'
+	case 0x1d:
+		return ']'
+	case 0x1e:
+		return '^'
+	case 0x1f:
+		return '_'
+	default:
+		return -1
+	}
+}
+
 // parseCSIInt reads a base-10 CSI parameter from data starting at i, returning
 // its value, the index just past the digits, and whether any digit was present.
 func parseCSIInt(data []byte, i int) (val, next int, ok bool) {
+	const maxCSIParameter = 0x10ffff
+
 	start := i
 	for i < len(data) && data[i] >= '0' && data[i] <= '9' {
-		val = val*10 + int(data[i]-'0')
+		digit := int(data[i] - '0')
+		if val > (maxCSIParameter-digit)/10 {
+			return 0, i, false
+		}
+		val = val*10 + digit
 		i++
 	}
 	return val, i, i > start
 }
 
-// ParseExitKey converts a config key spec like "ctrl+\" to its control byte.
-// Unrecognized specs fall back to ctrl+\ (0x1c).
-func ParseExitKey(spec string) byte {
+const exitKeyAcceptedForms = `ctrl+a through ctrl+z except ctrl+h, ctrl+i, ctrl+j, ctrl+m; or ctrl+\, ctrl+], ctrl+^, ctrl+_ (the ctrl+ prefix may be omitted)`
+
+// ParseExitKey converts a config key spec like "ctrl+q" to its control byte.
+func ParseExitKey(spec string) (byte, error) {
 	s := strings.ToLower(strings.TrimSpace(spec))
-	s = strings.TrimPrefix(s, "ctrl+")
-	if len(s) != 1 {
-		return 0x1c
+	key := strings.TrimPrefix(s, "ctrl+")
+	if len(key) != 1 {
+		return 0, fmt.Errorf("interact_exit_key %q is invalid (want %s)", spec, exitKeyAcceptedForms)
 	}
-	c := s[0]
+	c := key[0]
+	var b byte
 	switch {
 	case c >= 'a' && c <= 'z':
-		return c - 'a' + 1
+		b = c - 'a' + 1
 	case c == '\\':
-		return 0x1c
+		b = 0x1c
 	case c == ']':
-		return 0x1d
+		b = 0x1d
 	case c == '^':
-		return 0x1e
+		b = 0x1e
 	case c == '_':
-		return 0x1f
+		b = 0x1f
 	default:
-		return 0x1c
+		return 0, fmt.Errorf("interact_exit_key %q is invalid (want %s)", spec, exitKeyAcceptedForms)
 	}
+	if name := unsafeExitKeyName(b); name != "" {
+		return 0, fmt.Errorf("interact_exit_key %q maps to %s; choose a chord that will not detach during normal input", spec, name)
+	}
+	return b, nil
+}
+
+func unsafeExitKeyName(b byte) string {
+	switch b {
+	case '\r', '\n':
+		return "Enter"
+	case '\t':
+		return "Tab"
+	case '\b':
+		return "Backspace"
+	}
+	return ""
 }

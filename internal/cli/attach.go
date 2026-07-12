@@ -12,8 +12,8 @@ func newAttachCmd() *cobra.Command {
 		Short: "Attach to a running session",
 		Long: `Attach to a running session.
 
-Inside the session window, press Left arrow or ctrl+\ to detach. The session
-keeps running after you detach.`,
+Inside the session window, press the configured detach key (ctrl+q by default).
+The session keeps running after you detach.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := loadEnv()
