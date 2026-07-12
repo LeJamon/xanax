@@ -95,6 +95,93 @@ func runAttachTest(t *testing.T) ([]byte, Result) {
 	return <-got, res
 }
 
+func TestRunForwardsLeftArrow(t *testing.T) {
+	cases := []struct {
+		name string
+		left []byte
+	}{
+		{"legacy CSI", []byte{0x1b, '[', 'D'}},
+		{"application cursor SS3", []byte{0x1b, 'O', 'D'}},
+		{"Kitty report all keys", []byte{0x1b, '[', '1', 'D'}},
+		{"Kitty explicit press", []byte{0x1b, '[', '1', ';', '1', ':', '1', 'D'}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := net.Pipe()
+			defer server.Close()
+
+			inR, inW, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inR.Close()
+			defer inW.Close()
+
+			out, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer out.Close()
+
+			framesCh := make(chan []wire.Frame, 1)
+			go func() {
+				var frames []wire.Frame
+				for {
+					frame, err := wire.Read(server)
+					if err != nil {
+						framesCh <- frames
+						return
+					}
+					frames = append(frames, frame)
+					if frame.Type == wire.TypeDetach {
+						framesCh <- frames
+						return
+					}
+				}
+			}()
+
+			resCh := make(chan Result, 1)
+			go func() {
+				res, _ := runConnected(Options{In: inR, Out: out}, client)
+				resCh <- res
+			}()
+
+			input := append(append([]byte(nil), tc.left...), byte(0x1c))
+			if _, err := inW.Write(input); err != nil {
+				t.Fatal(err)
+			}
+
+			var res Result
+			select {
+			case res = <-resCh:
+			case <-time.After(3 * time.Second):
+				t.Fatal("attach did not return after exit key")
+			}
+			if res != Detached {
+				t.Fatalf("runConnected returned %v, want Detached", res)
+			}
+
+			var forwarded []byte
+			var detached bool
+			for _, frame := range <-framesCh {
+				switch frame.Type {
+				case wire.TypeInput:
+					forwarded = append(forwarded, frame.Payload...)
+				case wire.TypeDetach:
+					detached = true
+				}
+			}
+			if !bytes.Equal(forwarded, tc.left) {
+				t.Errorf("forwarded input = %q, want Left sequence %q", forwarded, tc.left)
+			}
+			if !detached {
+				t.Error("configured exit key did not send detach after forwarding Left")
+			}
+		})
+	}
+}
+
 // TestResetModesDisablesHarnessInputModes guards that every mouse/paste/focus
 // mode a harness may enable through the passthrough (mouse 1000/1002/1003 with
 // the SGR 1006 and urxvt 1015 encodings, bracketed paste 2004, focus 1004) is
@@ -119,21 +206,18 @@ func TestFindDetach(t *testing.T) {
 	}{
 		{"nothing", []byte("hello"), -1, 0},
 		{"exit key", []byte{'a', 'b', exit}, 2, 1},
-		{"left arrow CSI", []byte{'x', 0x1b, '[', 'D'}, 1, 3},
-		{"left arrow SS3", []byte{0x1b, 'O', 'D'}, 0, 3},
+		{"left arrow CSI passes through", []byte{'x', 0x1b, '[', 'D'}, -1, 0},
+		{"left arrow SS3 passes through", []byte{0x1b, 'O', 'D'}, -1, 0},
 		{"right arrow is not detach", []byte{0x1b, '[', 'C'}, -1, 0},
 		{"bare esc is not detach", []byte{0x1b}, -1, 0},
-		{"earliest wins: arrow before exit", []byte{0x1b, '[', 'D', exit}, 0, 3},
+		{"left before exit passes through", []byte{0x1b, '[', 'D', exit}, 3, 1},
 		{"earliest wins: exit before arrow", []byte{exit, 0x1b, '[', 'D'}, 0, 1},
 		// Kitty keyboard protocol: harnesses like codex push CSI > u, so the
-		// Left arrow arrives as a parameterized CSI. Unmodified presses detach.
-		{"kitty report-all-keys", []byte{0x1b, '[', '1', 'D'}, 0, 4},
-		{"kitty unmodified press", []byte{0x1b, '[', '1', ';', '1', 'D'}, 0, 6},
-		{"kitty explicit press event", []byte{0x1b, '[', '1', ';', '1', ':', '1', 'D'}, 0, 8},
-		{"kitty press after text", append([]byte("x"), 0x1b, '[', '1', ';', '1', 'D'), 1, 6},
-		// Repeat and release events are not presses, so they must not detach: a
-		// modifier released a beat before Left reports the Left release with no
-		// modifiers (ESC[1;1:3D), which must not eject the user mid-edit.
+		// Left arrow arrives as a parameterized CSI. Every form passes through.
+		{"kitty report-all-keys left passes through", []byte{0x1b, '[', '1', 'D'}, -1, 0},
+		{"kitty unmodified left passes through", []byte{0x1b, '[', '1', ';', '1', 'D'}, -1, 0},
+		{"kitty explicit left press passes through", []byte{0x1b, '[', '1', ';', '1', ':', '1', 'D'}, -1, 0},
+		{"kitty left after text passes through", append([]byte("x"), 0x1b, '[', '1', ';', '1', 'D'), -1, 0},
 		{"kitty unmodified release is not detach", []byte{0x1b, '[', '1', ';', '1', ':', '3', 'D'}, -1, 0},
 		{"kitty unmodified repeat is not detach", []byte{0x1b, '[', '1', ';', '1', ':', '2', 'D'}, -1, 0},
 		// A non-Left key code sharing the final 'D' (e.g. ANSI cursor-back-N,
@@ -141,13 +225,9 @@ func TestFindDetach(t *testing.T) {
 		{"csi cursor-back-5 is not detach", []byte{0x1b, '[', '5', 'D'}, -1, 0},
 		{"csi cursor-back-3 is not detach", []byte{0x1b, '[', '3', 'D'}, -1, 0},
 		{"csi other keycode is not detach", []byte{0x1b, '[', '5', '7', '4', '4', '4', ';', '1', 'D'}, -1, 0},
-		// Coalesced press+release from one Left tap (report-event-types on):
-		// the press matches first. This is the case the old exact-match missed.
-		{"kitty press then release coalesced", []byte{0x1b, '[', '1', ';', '1', 'D', 0x1b, '[', '1', ';', '1', ':', '3', 'D'}, 0, 6},
-		// Lock states (num_lock=128, caps_lock=64) are not real modifiers, so a
-		// plain Left with Num/Caps Lock on still detaches (ESC[1;129D / ESC[1;65D).
-		{"kitty left with num lock detaches", []byte{0x1b, '[', '1', ';', '1', '2', '9', 'D'}, 0, 8},
-		{"kitty left with caps lock detaches", []byte{0x1b, '[', '1', ';', '6', '5', 'D'}, 0, 7},
+		{"kitty press then release passes through", []byte{0x1b, '[', '1', ';', '1', 'D', 0x1b, '[', '1', ';', '1', ':', '3', 'D'}, -1, 0},
+		{"kitty left with num lock passes through", []byte{0x1b, '[', '1', ';', '1', '2', '9', 'D'}, -1, 0},
+		{"kitty left with caps lock passes through", []byte{0x1b, '[', '1', ';', '6', '5', 'D'}, -1, 0},
 		{"kitty ctrl+left with num lock is not detach", []byte{0x1b, '[', '1', ';', '1', '3', '3', 'D'}, -1, 0},
 		// Modified Left passes through to the harness (word nav / selection).
 		{"kitty ctrl+left is not detach", []byte{0x1b, '[', '1', ';', '5', 'D'}, -1, 0},

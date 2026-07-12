@@ -154,17 +154,11 @@ Unix socket server ──► attach / input / resize / subscribe / kill / info
     harness starts before any client attaches, the supervisor answers these itself
     while no client is connected; once a client attaches, its real terminal answers and
     the supervisor stays quiet (no double replies).
-- **Detach triggers.** The attach client detaches on `ctrl+\` (configurable
-  `interact_exit_key`) **or the Left arrow** — Left returns you to the dashboard and is
-  therefore not forwarded to the harness. Both triggers are recognized in every
-  encoding a harness may negotiate through the passthrough. The Left arrow: legacy
-  `ESC[D`, application cursor `ESCOD`, and the Kitty keyboard protocol's parameterized
-  forms (`ESC[1D`, `ESC[1;1D`) that harnesses like codex push (`CSI > u`). The exit key:
-  the raw control byte and, under the Kitty disambiguate flag, its `CSI u` form (`ctrl+\`
-  → `ESC[92;5u`). Only an *unmodified key press* detaches: `Ctrl`/`Alt`/`Shift`+Left pass
-  through for word navigation and selection, and repeat/release events are ignored so a
-  modifier released just before Left (reported as an unmodified Left release) does not
-  eject you mid-edit.
+- **Detach trigger.** The attach client detaches on `ctrl+\` (configurable
+  `interact_exit_key`). The trigger is recognized in the raw control-byte form and,
+  under the Kitty disambiguate flag, its `CSI u` form (`ctrl+\` → `ESC[92;5u`). Every
+  other key, including arrows, Escape, and pasted terminal control sequences, is
+  forwarded to the harness.
 
 ## 5. Adapter architecture
 
@@ -423,7 +417,9 @@ Session IDs accept unique prefixes everywhere (git-style).
 
 ## 10. Dashboard & attach UX
 
-Two layers, both driven by the arrow keys. `←` always means "back / up one level."
+The two input layers are deliberately separate: the dashboard owns its navigation
+bindings, while an attached session forwards harness input and reserves only the
+configured `interact_exit_key` for returning to the dashboard.
 
 ### Management view (dashboard)
 

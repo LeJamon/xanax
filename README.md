@@ -76,9 +76,9 @@ the prompt box. The selected row is framed with accent-colored top/bottom rules.
   selection moves; each row shows its live git branch (and open PR number, via
   `gh`) on the right.
 - **Session window:** opening a session drops you into the harness's own live TUI (the
-  conversation). Press **Left arrow** (or `ctrl+\`) to detach — the session keeps
-  running in the background; **Right arrow** from the list opens it. (Left/right are
-  intercepted by rvr as back/into, so they aren't sent to the harness.)
+  conversation). Press **`ctrl+\`** to detach — the session keeps running in the
+  background; **Right arrow** from the list opens it. Every harness key, including
+  arrows, is forwarded while attached.
 
 Sessions survive closing the dashboard and even a reboot: on the next launch, rvr
 auto-resumes interrupted sessions via the harness's native resume (like Claude
