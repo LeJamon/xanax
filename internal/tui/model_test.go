@@ -914,6 +914,42 @@ func TestReloadEmptyWithFilterFocusesComposer(t *testing.T) {
 	}
 }
 
+func TestComposerEscClearsAppliedFilter(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m.filter = "zzz"
+	m.sessions = filterSessions(m.allSessions, m.filter)
+	m.onComposer = true
+	m.composer.Focus()
+	if len(m.sessions) != 0 {
+		t.Fatalf("expected 0 matches, got %d", len(m.sessions))
+	}
+
+	m = send(m, "esc")
+	if m.filter != "" || len(m.sessions) != 3 {
+		t.Fatalf("esc from composer did not clear filter: filter=%q n=%d", m.filter, len(m.sessions))
+	}
+	if m.composer.Value() != "" {
+		t.Fatalf("esc typed into composer: %q", m.composer.Value())
+	}
+}
+
+func TestComposerEscClearsFilterAfterUnderlyingListEmpties(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	m.filter = "refactor"
+	m.sessions = filterSessions(m.allSessions, m.filter)
+
+	next, _ := m.Update(sessionsMsg{sessions: nil})
+	m = next.(model)
+	if !m.onComposer || m.filter == "" {
+		t.Fatalf("setup failed: onComposer=%v filter=%q", m.onComposer, m.filter)
+	}
+
+	m = send(m, "esc")
+	if m.filter != "" || len(m.sessions) != 0 {
+		t.Fatalf("esc after underlying empty list did not clear filter: filter=%q n=%d", m.filter, len(m.sessions))
+	}
+}
+
 // TestEscClearsFilterWhenAllHidden verifies Esc still clears an applied filter
 // when it currently hides every row (current() == nil), so the user is never
 // trapped in an empty filtered view.
@@ -974,6 +1010,23 @@ func TestEmptyStateRenders(t *testing.T) {
 	m := newTestModel(nil)
 	if out := m.View(); !strings.Contains(out, "No sessions") {
 		t.Errorf("empty state not shown: %q", out)
+	}
+}
+
+func TestFilteredEmptyStateRendersClearHint(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m.filter = "zzz"
+	m.sessions = filterSessions(m.allSessions, m.filter)
+
+	out := stripANSI(m.renderList(10))
+	if !strings.Contains(out, `No sessions match "zzz"`) {
+		t.Fatalf("filtered empty state missing query: %q", out)
+	}
+	if !strings.Contains(out, "press esc to clear filter") {
+		t.Fatalf("filtered empty state missing clear hint: %q", out)
+	}
+	if strings.Contains(out, "No sessions yet") {
+		t.Fatalf("filtered empty state used first-run copy: %q", out)
 	}
 }
 
@@ -1233,6 +1286,74 @@ func TestFooterReflectsReboundKeys(t *testing.T) {
 	m.deps.Cfg.Keys.Remove = config.Binding{"x"}
 	if foot := m.footer(); !strings.Contains(foot, "x remove") {
 		t.Errorf("footer did not reflect the rebound remove key: %q", foot)
+	}
+}
+
+func TestFooterShowsClearFilterHintWhenFilterApplied(t *testing.T) {
+	tests := []struct {
+		name string
+		mode func(model) model
+		want bool
+	}{
+		{
+			name: "composer",
+			mode: func(m model) model {
+				m.filter = "zzz"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.onComposer = true
+				return m
+			},
+			want: true,
+		},
+		{
+			name: "session list",
+			mode: func(m model) model {
+				m.filter = "refactor"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.onComposer = false
+				return m
+			},
+			want: true,
+		},
+		{
+			name: "filtering",
+			mode: func(m model) model {
+				m.filter = "refactor"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.filtering = true
+				return m
+			},
+		},
+		{
+			name: "settings",
+			mode: func(m model) model {
+				m.filter = "refactor"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.settingsOn = true
+				return m
+			},
+		},
+		{
+			name: "remove confirmation",
+			mode: func(m model) model {
+				m.filter = "refactor"
+				m.sessions = filterSessions(m.allSessions, m.filter)
+				m.onComposer = false
+				m.confirmRemoveID = m.sessions[0].ID
+				return m
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.mode(newTestModel(sampleSessions()))
+			hasHint := strings.Contains(stripANSI(m.footer()), "esc clear filter")
+			if hasHint != tc.want {
+				t.Fatalf("clear-filter hint presence = %v, want %v; footer: %q",
+					hasHint, tc.want, stripANSI(m.footer()))
+			}
+		})
 	}
 }
 
