@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ func newNewCmd() *cobra.Command {
 		repo     string
 		title    string
 		noAttach bool
+		asJSON   bool
 	)
 	cmd := &cobra.Command{
 		Use:   `new [flags] "prompt"`,
@@ -76,12 +78,17 @@ func newNewCmd() *cobra.Command {
 			st.RecordEvent(sess.ID, "created", map[string]any{"harness": harnessName})
 			st.TouchRepository(repoAbs, filepath.Base(repoAbs))
 
-			if _, err := e.spawnSupervisor(sess.ID, false); err != nil {
+			if _, err := startNewSessionSupervisor(e, sess.ID); err != nil {
 				st.FinishWithDetail(sess.ID, session.StatusFailed, 1, err.Error())
 				return err
 			}
 
 			out := cmd.OutOrStdout()
+			if asJSON {
+				enc := json.NewEncoder(out)
+				enc.SetIndent("", "  ")
+				return enc.Encode(sess)
+			}
 			fmt.Fprintf(out, "Started session %s (%s) in %s\n",
 				shortID(sess.ID), harnessName, filepath.Base(repoAbs))
 
@@ -104,7 +111,12 @@ func newNewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repo, "repo", ".", "repository to run the agent in")
 	cmd.Flags().StringVar(&title, "title", "", "session title (default: derived from prompt)")
 	cmd.Flags().BoolVar(&noAttach, "no-attach", false, "do not attach after launching")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output the created session as JSON and do not attach")
 	return cmd
+}
+
+var startNewSessionSupervisor = func(e *env, id string) (int, error) {
+	return e.spawnSupervisor(id, false)
 }
 
 // runAttach connects to a live session and proxies the terminal.
