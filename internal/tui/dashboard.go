@@ -303,8 +303,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.composer.SetWidth(max(20, msg.Width-2))
-		m.syncComposerHeight() // wrap width changed, so the row count may have too
+		m.composer.SetWidth(max(1, msg.Width-2))
+		m.reflowComposer() // wrap width changed, so rebuild its height and viewport
 		m.renameInput.Width = max(20, msg.Width-4)
 		if m.addingHarness {
 			m.syncFormWidths() // keep the form inputs sized to the (resized) modal
@@ -369,6 +369,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// typing something new we must not clobber.
 		if msg.restorePrompt != "" && m.composer.Value() == "" {
 			m.composer.SetValue(msg.restorePrompt)
+			m.reflowComposer()
 		}
 		return m, m.reload()
 
@@ -542,26 +543,95 @@ func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// syncComposerHeight sizes the prompt box to its content: it starts at a single
-// line and grows as the user types or pastes, counting visual rows (long lines
-// wrap at the composer's text width) and clamping between one line and a modest
-// ceiling so the box never crowds out the session list.
+// syncComposerHeight sizes the prompt box to its content and realigns the
+// textarea's viewport whenever the visible row count changes.
 func (m *model) syncComposerHeight() {
+	m.resizeComposer(false)
+}
+
+// reflowComposer also rebuilds the textarea's viewport when its width or value
+// changed outside textarea.Update (terminal resize and failed-launch restore).
+func (m *model) reflowComposer() {
+	m.resizeComposer(true)
+}
+
+func (m *model) resizeComposer(forceReflow bool) {
 	const ceiling = 10
-	width := m.composer.Width()
-	rows := 0
-	for line := range strings.SplitSeq(m.composer.Value(), "\n") {
-		if width <= 0 {
-			rows++ // no wrap width yet (pre-resize); count logical lines
-			continue
-		}
-		rows += max(1, (lipgloss.Width(line)+width-1)/width)
-	}
 	maxRows := ceiling
 	if m.height > 0 {
 		maxRows = min(ceiling, max(1, m.height/3))
 	}
-	m.composer.SetHeight(min(max(rows, 1), maxRows))
+	height := composerVisualRows(m.composer, maxRows)
+	if forceReflow || height != m.composer.Height() {
+		m.setComposerHeight(height)
+		return
+	}
+	// At the cap, a paste can add multiple rows without changing the widget's
+	// height. Refresh before repositioning so the cursor is visible immediately.
+	if height == maxRows {
+		m.repositionComposerViewport()
+	}
+}
+
+// composerVisualRows walks a copy of the composer so LineInfo applies the exact
+// wrapping rules without moving the live cursor. The copy reuses the textarea's
+// wrap cache and backing value instead of allocating a new 10,000-line buffer
+// on the keystroke hot path.
+func composerVisualRows(composer textarea.Model, limit int) int {
+	limit = max(1, limit)
+	for composer.Line() < composer.LineCount()-1 {
+		composer.CursorEnd()
+		composer.CursorDown()
+	}
+	composer.CursorEnd()
+
+	rows := 0
+	for {
+		rows += composer.LineInfo().Height
+		if rows >= limit {
+			return limit
+		}
+		if composer.Line() == 0 {
+			return max(1, rows)
+		}
+		// CursorUp from column zero moves directly to the preceding logical line.
+		composer.CursorStart()
+		composer.CursorUp()
+	}
+}
+
+// setComposerHeight preserves the edit position while resetting Bubbles'
+// private viewport. SetHeight alone leaves its old scroll offset in place,
+// which is why earlier wrapped rows used to disappear as the box grew.
+func (m *model) setComposerHeight(height int) {
+	value := m.composer.Value()
+	line := m.composer.Line()
+	info := m.composer.LineInfo()
+	column := info.StartColumn + info.ColumnOffset
+
+	m.composer.SetHeight(height)
+	m.composer.SetValue(value) // Reset inside SetValue returns the viewport to top.
+	for m.composer.Line() > line {
+		m.composer.CursorStart()
+		m.composer.CursorUp()
+	}
+	m.composer.SetCursor(column)
+	m.repositionComposerViewport()
+}
+
+// repositionComposerViewport renders content into the textarea's viewport,
+// then lets its update loop scroll the restored cursor into view. The temporary
+// focus is necessary because a blurred textarea ignores updates.
+func (m *model) repositionComposerViewport() {
+	focused := m.composer.Focused()
+	if !focused {
+		m.composer.Focus()
+	}
+	_ = m.composer.View()
+	m.composer, _ = m.composer.Update(nil)
+	if !focused {
+		m.composer.Blur()
+	}
 }
 
 // updatePickKey runs while the harness picker is open. It opens with the search
