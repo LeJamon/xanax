@@ -3,8 +3,8 @@ package tui
 import (
 	"github.com/charmbracelet/lipgloss"
 
-	"rvr/internal/config"
-	"rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // Colors and styles are package-level and rebuilt from the configured theme by
@@ -76,6 +76,8 @@ func hRules(color lipgloss.Color, width int) lipgloss.Style {
 // statusColor maps a session status to its accent color.
 func statusColor(s session.Status) lipgloss.Color {
 	switch s {
+	case session.StatusIdle:
+		return colMuted
 	case session.StatusWaiting:
 		return colWaiting
 	case session.StatusRunning, session.StatusStarting:
@@ -94,6 +96,8 @@ func statusColor(s session.Status) lipgloss.Color {
 // statusGlyph is a compact indicator per status.
 func statusGlyph(s session.Status) string {
 	switch s {
+	case session.StatusIdle:
+		return "○"
 	case session.StatusWaiting:
 		return "?"
 	case session.StatusRunning:

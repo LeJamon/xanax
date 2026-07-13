@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"rvr/internal/attach"
-	"rvr/internal/config"
-	"rvr/internal/session"
-	"rvr/internal/store"
+	"github.com/LeJamon/rvr/internal/attach"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/store"
 )
 
 // socketPath is the unix socket for a session's supervisor.
@@ -43,22 +43,34 @@ func (e *env) supervisorLogPath(id string) string {
 	return filepath.Join(e.paths.LogsDir, id+".supervisor.log")
 }
 
-func (e *env) waitForSocketOrTerminal(st *store.Store, id string, timeout time.Duration) (alive bool, terminal *session.Session) {
+func (e *env) waitForSocketOrTerminal(
+	st *store.Store,
+	id string,
+	timeout time.Duration,
+) (alive bool, terminal *session.Session, err error) {
 	deadline := time.Now().Add(timeout)
 	path := e.socketPath(id)
 	for time.Now().Before(deadline) {
 		if attach.Alive(path) {
-			return true, nil
+			return true, nil, nil
 		}
-		if sess, err := st.GetSession(id); err == nil && sess.Status.Terminal() {
-			return false, sess
+		sess, err := st.GetSession(id)
+		if err != nil {
+			return false, nil, err
+		}
+		if sess.Status.Terminal() {
+			return false, sess, nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if sess, err := st.GetSession(id); err == nil && sess.Status.Terminal() {
-		return false, sess
+	sess, err := st.GetSession(id)
+	if err != nil {
+		return false, nil, err
 	}
-	return false, nil
+	if sess.Status.Terminal() {
+		return false, sess, nil
+	}
+	return false, nil, nil
 }
 
 func (e *env) supervisorStartingError(id string, timeout time.Duration) error {
@@ -120,6 +132,10 @@ func failureDetail(st *store.Store, sess *session.Session) string {
 	return ""
 }
 
+func missingHarnessDetail(name string) string {
+	return fmt.Sprintf("harness %q is not configured (see rvr config)", name)
+}
+
 // spawnSupervisor starts a detached `rvr _supervise <id>` process that
 // outlives this one (SPEC.md §3). It returns the supervisor pid.
 func (e *env) spawnSupervisor(id string, resume bool) (int, error) {
@@ -150,6 +166,7 @@ func (e *env) spawnSupervisor(id string, resume bool) (int, error) {
 		args = append(args, "--resume")
 	}
 	cmd := exec.Command(exe, args...)
+	cmd.Env = withoutEnv(os.Environ(), attach.ResultFDEnv)
 	cmd.Stdin = devnull
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -160,6 +177,17 @@ func (e *env) spawnSupervisor(id string, resume bool) (int, error) {
 	pid := cmd.Process.Pid
 	_ = cmd.Process.Release()
 	return pid, nil
+}
+
+func withoutEnv(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 // waitForSocket blocks until the session's supervisor is accepting, or timeout.

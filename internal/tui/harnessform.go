@@ -13,7 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/config"
 )
 
 // The add-harness form fields, in order.
@@ -162,6 +162,12 @@ func (m model) submitHarness() (tea.Model, tea.Cmd) {
 		m.formErr = "no config path"
 		return m, nil
 	}
+	unlock, err := acquireConfigLock(m.deps.ConfigPath)
+	if err != nil {
+		m.formErr = "lock failed: " + err.Error()
+		return m, nil
+	}
+	defer unlock()
 
 	// Check names against the config on disk, not the (possibly stale) in-memory
 	// list, and refuse to touch a config we cannot parse — either would risk a
@@ -333,13 +339,12 @@ func writeHarnessBlock(path string, h harnessSpec) error {
 // appendHarnessBlock writes a fresh [harness.<name>] table at the end of the
 // file, preserving everything above it.
 func appendHarnessBlock(path, name string, h config.Harness) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	defer f.Close()
-	_, err = fmt.Fprintf(f, "\n%s", harnessBlock(name, h))
-	return err
+	data = append(data, []byte("\n"+harnessBlock(name, h))...)
+	return writeFileAtomic(path, data, 0o600)
 }
 
 // replaceHarnessBlock rewrites the [harness.oldName] table in place with a fresh
@@ -382,7 +387,7 @@ func replaceHarnessBlock(path, oldName, newName string, h config.Harness) error 
 	out = append(out, lines[:start]...)
 	out = append(out, block...)
 	out = append(out, lines[end:]...)
-	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
+	return writeFileAtomic(path, []byte(strings.Join(out, "\n")), 0o600)
 }
 
 // harnessBlock renders a complete [harness.<name>] TOML table for h, omitting
@@ -444,7 +449,7 @@ func restoreConfig(path string, orig []byte, origErr error) {
 		_ = os.Remove(path)
 		return
 	}
-	_ = os.WriteFile(path, orig, 0o600)
+	_ = writeFileAtomic(path, orig, 0o600)
 }
 
 // setDefaultInConfig writes default_harness = "name" to the config file.
@@ -474,5 +479,5 @@ func setDefaultInConfig(path string, name string) error {
 	if !found {
 		out = append([]string{fmt.Sprintf("default_harness = %q", name)}, out...)
 	}
-	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
+	return writeFileAtomic(path, []byte(strings.Join(out, "\n")), 0o600)
 }

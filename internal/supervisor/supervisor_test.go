@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"rvr/internal/config"
-	"rvr/internal/session"
-	"rvr/internal/store"
-	"rvr/internal/supervisor"
-	"rvr/internal/wire"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/store"
+	"github.com/LeJamon/rvr/internal/supervisor"
+	"github.com/LeJamon/rvr/internal/wire"
 )
 
 func testPaths(t *testing.T) config.Paths {
@@ -470,8 +470,8 @@ func TestGenericStateInferenceViaPattern(t *testing.T) {
 }
 
 // TestGenericStateInferenceViaIdle drives a generic harness that emits once and
-// then goes silent, and confirms the idle timeout flips it to waiting with an
-// "idle" detail.
+// then goes silent, and confirms the idle timeout flips it to the distinct,
+// non-actionable idle state.
 func TestGenericStateInferenceViaIdle(t *testing.T) {
 	paths := testPaths(t)
 	st, err := store.Open(paths.DBFile)
@@ -499,17 +499,17 @@ func TestGenericStateInferenceViaIdle(t *testing.T) {
 	sock := filepath.Join(paths.SocketDir, sess.ID+".sock")
 	waitAlive(t, sock)
 
-	// Poll the store until it reports waiting with an "idle" detail.
+	// Poll the store until it reports idle without pretending input is needed.
 	deadline := time.Now().Add(4 * time.Second)
 	var got *session.Session
 	for time.Now().Before(deadline) {
-		if got, err = st.GetSession(sess.ID); err == nil && got.Status == session.StatusWaiting {
+		if got, err = st.GetSession(sess.ID); err == nil && got.Status == session.StatusIdle {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if got == nil || got.Status != session.StatusWaiting || got.StatusDetail != "idle" {
-		t.Errorf("idle inference: status=%q detail=%q, want waiting/idle", got.Status, got.StatusDetail)
+	if got == nil || got.Status != session.StatusIdle || got.StatusDetail != "" {
+		t.Errorf("idle inference: status=%q detail=%q, want idle with no detail", got.Status, got.StatusDetail)
 	}
 
 	k, _ := net.Dial("unix", sock)

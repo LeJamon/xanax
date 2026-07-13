@@ -5,8 +5,8 @@ import (
 	"os"
 	"sort"
 
-	"rvr/internal/config"
-	"rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // genericAdapter runs any CLI from configuration. It has no state channel, so

@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"rvr/internal/config"
-	"rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // errAuth signals that the opencode server rejected our unauthenticated

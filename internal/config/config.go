@@ -13,7 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // Adapter names accepted in harness configuration.
@@ -45,10 +45,10 @@ type Harness struct {
 	PromptPositional bool   `toml:"prompt_positional,omitempty"`
 
 	// Approximate state detection for the generic adapter (no native state
-	// channel). IdleTimeout marks the session "waiting" after that many seconds
-	// with no output; WaitingPattern is a regexp matched against output that
-	// marks it "waiting" immediately (e.g. a "(y/n)" prompt). Either resets to
-	// "running" when output resumes. Ignored by native adapters.
+	// channel). IdleTimeout marks the session non-actionably "idle" after that
+	// many seconds with no output; WaitingPattern is a regexp matched against
+	// output that marks it "waiting" immediately (e.g. a "(y/n)" prompt).
+	// Either resets to "running" when output resumes. Ignored by native adapters.
 	IdleTimeout    int    `toml:"idle_timeout,omitempty"`
 	WaitingPattern string `toml:"waiting_pattern,omitempty"`
 }
@@ -73,11 +73,11 @@ type Config struct {
 // dashboard's open-session action, so a terminal session (e.g. completed) that
 // resume can revive is never wrongly reported as unopenable.
 func (c *Config) CanResume(sess *session.Session) bool {
-	if sess.HarnessSessionRef != "" {
-		return true
-	}
 	h, ok := c.Harnesses[sess.Harness]
-	return ok && len(h.ResumeArgs) > 0
+	if !ok {
+		return false
+	}
+	return sess.HarnessSessionRef != "" || len(h.ResumeArgs) > 0
 }
 
 // Theme colors the dashboard TUI. Each value is an ANSI palette index ("0"–
@@ -131,6 +131,7 @@ type KeyMap struct {
 	Remove   Binding `toml:"remove"`    // remove the session; live sessions confirm first
 	Resume   Binding `toml:"resume"`    // resume the session
 	Rename   Binding `toml:"rename"`    // rename its rvr label
+	Logs     Binding `toml:"logs"`      // show the stored session log
 	Preview  Binding `toml:"preview"`   // toggle the screen peek
 	Filter   Binding `toml:"filter"`    // open the filter bar
 	Settings Binding `toml:"settings"`  // open the in-TUI keybindings editor
@@ -242,6 +243,7 @@ func DefaultKeys() KeyMap {
 		Remove:   Binding{"ctrl+x"},
 		Resume:   Binding{"r", "ctrl+r"},
 		Rename:   Binding{"e"},
+		Logs:     Binding{"l"},
 		Preview:  Binding{"space"},
 		Filter:   Binding{"/"},
 		Settings: Binding{"s"},
@@ -274,6 +276,7 @@ func (k KeyMap) Actions() []KeyAction {
 		{"remove", "remove the session; confirms before killing live sessions", k.Remove},
 		{"resume", "resume the selected session", k.Resume},
 		{"rename", "rename the session's rvr label", k.Rename},
+		{"logs", "show the selected session's stored log", k.Logs},
 		{"preview", "toggle the screen peek", k.Preview},
 		{"filter", "filter the session list", k.Filter},
 		{"settings", "open this keybindings editor", k.Settings},
@@ -309,6 +312,7 @@ func mergeKeys(base, over KeyMap) KeyMap {
 		Remove:        pick(base.Remove, over.Remove),
 		Resume:        pick(base.Resume, over.Resume),
 		Rename:        pick(base.Rename, over.Rename),
+		Logs:          pick(base.Logs, over.Logs),
 		Preview:       pick(base.Preview, over.Preview),
 		Filter:        pick(base.Filter, over.Filter),
 		Settings:      pick(base.Settings, over.Settings),

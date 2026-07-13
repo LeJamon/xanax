@@ -8,8 +8,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"rvr/internal/config"
-	"rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // pickerModalWidth returns the modal's content width (the columns between the
@@ -299,14 +299,27 @@ func (m model) inputBlock() string {
 // renderPreview shows a peek of the selected session's screen once space has
 // opened the preview and a snapshot has been fetched.
 func (m model) renderPreview() string {
-	if !m.previewOn || m.onComposer || m.previewText == "" {
+	if !m.previewOn || m.onComposer {
 		return ""
 	}
-	// previewText is only ever stored for the selected session (see the previewMsg
-	// handler), so the selected id is the preview's id.
-	id := m.selectedID()
-	label := mutedStyle.Render("Preview  ·  " + id[:min(8, len(id))])
-	body := lipgloss.NewStyle().Foreground(colMuted).Render(m.previewText)
+	s := m.current()
+	if s == nil {
+		return ""
+	}
+	bodyText := m.previewText
+	if bodyText == "" {
+		bodyText = terminalDetailText(s)
+	}
+	if bodyText == "" {
+		return ""
+	}
+	id := s.ID
+	title := m.previewLabel
+	if title == "" {
+		title = "Preview"
+	}
+	label := mutedStyle.Render(title + "  ·  " + id[:min(8, len(id))])
+	body := lipgloss.NewStyle().Foreground(colMuted).Render(bodyText)
 	return label + "\n" + hRules(colMuted, m.width).Render(body)
 }
 
@@ -348,7 +361,7 @@ func (m model) header() string {
 // non-empty, so the header always reconciles with the list below without
 // cluttering the common case.
 func (m model) counts() string {
-	var c [6]int // indexed by groupRank: waiting, running, completed, cancelled, failed, other
+	var c [7]int // indexed by groupRank: waiting, idle, running, completed, cancelled, failed, other
 	for _, s := range m.sessions {
 		r := groupRank(s.Status)
 		if r >= len(c) {
@@ -361,17 +374,20 @@ func (m model) counts() string {
 			mutedStyle.Render(" "+label)
 	}
 	dot := mutedStyle.Render("  ·  ")
-	out := seg(c[0], colWaiting, "awaiting input") + dot +
-		seg(c[1], colRunning, "working") + dot +
-		seg(c[2], colCompleted, "completed")
-	if c[3] > 0 {
-		out += dot + seg(c[3], colCancelled, "cancelled")
+	out := seg(c[0], colWaiting, "awaiting input")
+	if c[1] > 0 {
+		out += dot + seg(c[1], colMuted, "idle")
 	}
+	out += dot + seg(c[2], colRunning, "working") + dot +
+		seg(c[3], colCompleted, "completed")
 	if c[4] > 0 {
-		out += dot + seg(c[4], colFailed, "failed")
+		out += dot + seg(c[4], colCancelled, "cancelled")
 	}
 	if c[5] > 0 {
-		out += dot + seg(c[5], colMuted, "other")
+		out += dot + seg(c[5], colFailed, "failed")
+	}
+	if c[6] > 0 {
+		out += dot + seg(c[6], colMuted, "other")
 	}
 	return out
 }
@@ -566,12 +582,12 @@ func (m model) renderRow(s *session.Session, selected bool) string {
 	if selected {
 		title = selectStyle.Render(title)
 	}
-	meta := mutedStyle.Render(fmt.Sprintf("%s · %s · %s",
-		s.Harness, repoName(s.RepoPath), humanAge(s.CreatedAt)))
+	meta := mutedStyle.Render(fmt.Sprintf("%s · %s · %s · %s",
+		shortID(s.ID), s.Harness, repoName(s.RepoPath), humanAge(s.CreatedAt)))
 
 	content := fmt.Sprintf("%s %s   %s", glyph, title, meta)
-	if s.Status == session.StatusWaiting && s.StatusDetail != "" {
-		content += mutedStyle.Render("  — " + truncate(s.StatusDetail, 40))
+	if detail := rowDetailText(s); detail != "" {
+		content += mutedStyle.Render("  — " + truncate(detail, 48))
 	}
 
 	// Live git context (branch · #PR), right-aligned against the row edge.
@@ -583,6 +599,24 @@ func (m model) renderRow(s *session.Session, selected bool) string {
 	}
 	// The selected session gets full-width top+bottom rules in the accent color.
 	return hRules(colAccent, m.width).Render(content)
+}
+
+func rowDetailText(s *session.Session) string {
+	var parts []string
+	if detail := strings.TrimSpace(s.StatusDetail); detail != "" {
+		parts = append(parts, detail)
+	}
+	if (s.Status == session.StatusFailed || s.Status == session.StatusCancelled) && s.ExitCode != nil {
+		parts = append(parts, fmt.Sprintf("exit %d", *s.ExitCode))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func terminalDetailText(s *session.Session) string {
+	if s.Status != session.StatusFailed && s.Status != session.StatusCancelled {
+		return ""
+	}
+	return rowDetailText(s)
 }
 
 // gitSuffix renders " branch · #pr" for a repo, or "" when unknown.
@@ -720,8 +754,8 @@ func (m model) footer() string {
 			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),
 			keyHint(k.Up), keyHint(k.Quit))
 	default:
-		hint = fmt.Sprintf("%s select · %s open · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
-			updown, keyHint(k.Open), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
+		hint = fmt.Sprintf("%s select · %s open · ← back · %s logs · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
+			updown, keyHint(k.Open), keyHint(k.Logs), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
 			keyHint(k.Remove), keyHint(k.Settings), keyHint(k.Filter), keyHint(k.Quit))
 	}
 	out := footerStyle.Render(hint)

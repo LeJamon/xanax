@@ -7,7 +7,7 @@ rvr is **not** an agent framework: no planning, no prompting, no memory, no tool
 It is a control plane over existing harnesses (tmux + htop for AI agents).
 
 - Language: **Go** (pure-Go dependencies preferred, single static binary)
-- Platforms: macOS (arm64/x86_64), Linux (glibc)
+- Platforms: macOS and Linux (amd64/arm64 release artifacts)
 - v1 harnesses: **opencode**, **pi**, and **codex** (architecture stays
   harness-generic; codex uses the generic adapter)
 
@@ -20,7 +20,7 @@ It is a control plane over existing harnesses (tmux + htop for AI agents).
 | D1 | State detection | Native side channels per harness (opencode SSE, pi extension); harnesses without a channel get running/exited only |
 | D2 | Supervision model | One detached supervisor **process per session** |
 | D3 | Resume semantics | Reattach while the supervisor is alive. Interrupted sessions (reboot, supervisor crash) are **auto-resumed on the next rvr launch** via the harness's native resume flag and the captured session ref (§6). `rvr resume` covers manual cases. |
-| D4 | v1 extras | Core loop only; desktop notifications next in line |
+| D4 | v1 extras | Desktop notifications, filtering, previews, and keybinding management included |
 
 Rationale for D1/D2 in §5 and §4. Deferred features in §12.
 
@@ -35,7 +35,7 @@ harness versions we test against** and degrade gracefully on mismatch.
 - The TUI is client+server. Launching with `--port <n>` (default host 127.0.0.1)
   exposes an HTTP API on the live TUI process.
 - `GET /event` is an SSE stream: `session.status` (`idle` | `busy` | `retry`),
-  `session.idle`, `permission.asked`/`permission.replied`, `session.error`. This is a
+  `session.idle`, `permission.updated`, `session.error`. This is a
   reliable running/waiting signal. `GET /session/status` exists as a polling fallback
   (dev branch — verify against the release we pin).
 - Prompt injection into the TUI: `POST /tui/append-prompt` then `POST /tui/submit-prompt`.
@@ -63,8 +63,8 @@ harness versions we test against** and degrade gracefully on mismatch.
 
 **Consequences:**
 1. The original spec's "Escape returns to dashboard" is impossible — Escape interrupts
-   the agent in both TUIs. rvr uses **arrow-key navigation** for its own chrome and
-   reserves passthrough-exit for a key both harnesses leave free, **`ctrl+\`** (§10).
+   the agent in both TUIs. The dashboard uses arrow-key navigation; inside a session,
+   unmodified Left or the configurable **`ctrl+\`** detach gesture returns to it (§10).
 2. Terminal-output regex scraping would fight full-screen TUI escape sequences;
    both harnesses offer better channels — hence D1.
 3. `completed` vs `failed` cannot rest on exit codes; the state channel and
@@ -83,8 +83,10 @@ rvr (CLI / dashboard TUI)          — foreground, short- or long-lived
 ```
 
 - `rvr new` inserts the session row, then spawns `rvr _supervise <id>` detached
-  (setsid, stdio → per-session log file) and returns. Optionally attaches immediately
-  (`--attach`, default true when stdout is a TTY).
+  (setsid, stdio → per-session log file) and returns. Prompt words are joined
+  with spaces, a single `-` reads the prompt from stdin, and no prompt starts a
+  fresh interactive harness. Optionally attaches immediately (`--attach`, default
+  true when stdout is a TTY).
 - The **supervisor** owns: the PTY, an in-memory output ring buffer, the raw output
   log, the state side channel, a unix control socket, and all SQLite writes for its
   session. It outlives the UI; sessions keep running when the dashboard exits.
@@ -204,8 +206,8 @@ type StateEvent struct {
   rvr **stops watching** — the harness still works, the session just degrades to
   running/exited with no fine-grained state.
 - `SessionRef`: first sessionID observed on the SSE stream.
-- Note: opencode's current `dev` branch uses `permission.updated` (not
-  `permission.asked`); verify against the pinned release.
+- Adapter contract tests cover the `permission.updated` event shape; live
+  release validation should record the upstream version used.
 
 ### pi adapter
 - Launch `pi -e <hook.mjs> "<prompt>"` with cwd = repo, `PI_SKIP_VERSION_CHECK=1`,
@@ -233,9 +235,10 @@ writes a native adapter. `command`, `args`, `resume_args`, `env` from config.
   auto-resume-after-reboot treat a configured `resume_args` as "resumable" even
   though generic captures no session ref. Precise when there is one session per repo.
 - **State inference (approximate, opt-in):** with no native state channel the
-  supervisor can still infer needs-input from the output stream — `idle_timeout = N`
-  marks the session *waiting* after N seconds of silence; `waiting_pattern = "regexp"`
-  marks it *waiting* on an output match (e.g. `\(y/n\)`). Either resets to *running*
+  supervisor can still infer state from the output stream — `idle_timeout = N`
+  marks the session non-actionably *idle* after N seconds of silence;
+  `waiting_pattern = "regexp"` marks it *waiting* on an output match (e.g.
+  `\(y/n\)`). Either resets to *running*
   when output resumes. Best-effort; a native adapter is authoritative.
 - **Add from the dashboard:** the harness picker's `+` opens a form (name / command /
   prompt arg / idle timeout / waiting pattern) that appends a generic `[harness.name]`
@@ -246,14 +249,17 @@ writes a native adapter. `command`, `args`, `resume_args`, `env` from config.
 ## 6. Session state model
 
 ```
-starting ──► running ⇄ waiting          (AgentBusy / AgentIdle+NeedsInput)
+starting ──► running ⇄ idle             (AgentBusy / AgentIdle)
+                    ⇄ waiting          (explicit input/permission needed)
                 │
                 ▼ (harness process exits)
    completed | failed | cancelled
 ```
 
-- `waiting` = agent idle and expecting user input (opencode `idle`/`permission.asked`,
-  pi `agent_end`). For an interactive TUI this includes "task done, prompt ready".
+- `idle` = the agent finished a turn or a generic idle timeout elapsed; it is
+  informative but not treated as an input request.
+- `waiting` = the harness explicitly reported an input or permission request, or a
+  configured output pattern matched.
 - Terminal states, decided at process exit:
   - `cancelled` — rvr initiated the kill.
   - `completed` — exit code 0 **and** last known agent state was idle.
@@ -264,13 +270,13 @@ starting ──► running ⇄ waiting          (AgentBusy / AgentIdle+NeedsInpu
 ### Interrupted sessions & auto-resume
 
 A session whose supervisor is gone (reboot, crash, SIGKILL) while its status was
-`starting`/`running`/`waiting` is **interrupted**, not failed. A reconciliation pass
+`starting`/`running`/`idle`/`waiting` is **interrupted**, not failed. A reconciliation pass
 runs on dashboard startup and before `list`/`attach`/`resume`:
 
 1. For each session in a live state, probe its socket.
 2. Dead socket, `auto_resume = true` (default), and `harness_session_ref` present →
    respawn `rvr _supervise` in resume mode; the session reappears, typically as
-   `waiting` (same behavior as Claude Code's persistent background agents).
+   `idle` (same behavior as Claude Code's persistent background agents).
 3. Dead socket and no session ref (harness never reported one) →
    `failed` with detail `orphaned`.
 
@@ -285,13 +291,13 @@ re-trigger agent work — so auto-resume is safe and spends no tokens.
 | Database | `~/.local/share/rvr/rvr.db` (SQLite, WAL, `modernc.org/sqlite`) |
 | Raw session output | `~/.local/share/rvr/logs/<session-id>.raw` |
 | Supervisor logs | `~/.local/share/rvr/logs/<session-id>.supervisor.log` |
-| pi hook extension | `~/.local/share/rvr/pi/hook.ts` (re-materialized per version) |
+| pi hook extension | `~/.local/share/rvr/pi/hook.mjs` (re-materialized per version) |
 | Sockets | `/tmp/rvr-<uid>/<session-id>.sock` |
 
 XDG paths are used on both macOS and Linux (`XDG_CONFIG_HOME`/`XDG_DATA_HOME`
 respected) — consistent with how opencode and pi behave.
 
-### Schema (v1)
+### Schema (v2)
 
 ```sql
 CREATE TABLE sessions (
@@ -302,14 +308,15 @@ CREATE TABLE sessions (
   harness            TEXT NOT NULL,      -- config key: "opencode" | "pi" | ...
   harness_session_ref TEXT,              -- native resume handle
   initial_prompt     TEXT,
-  status             TEXT NOT NULL,      -- starting|running|waiting|completed|failed|cancelled
+  status             TEXT NOT NULL,      -- starting|running|idle|waiting|completed|failed|cancelled
   status_detail      TEXT,               -- e.g. permission question, failure reason
   pid                INTEGER,            -- supervisor pid
   socket_path        TEXT,
   exit_code          INTEGER,
   created_at         TEXT NOT NULL,      -- RFC3339 UTC
   updated_at         TEXT NOT NULL,
-  ended_at           TEXT
+  ended_at           TEXT,
+  lifecycle          INTEGER NOT NULL DEFAULT 1 -- incremented for each resume generation
 );
 CREATE TABLE events (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -334,8 +341,7 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 default_harness   = "opencode"
 auto_resume       = true         # revive interrupted sessions on launch (§6)
 notifications     = true         # desktop notifications on needs-input/completed/failed
-interact_exit_key = "ctrl+\\"    # step out of raw passthrough back to navigate mode (§10);
-                                 # arrows/Escape are reserved by the harness TUIs
+interact_exit_key = "ctrl+\\"    # step out of raw passthrough back to navigate mode (§10)
 
 # TUI colors — ANSI palette index ("0"–"255") or hex ("#rgb"/"#rrggbb"); omitted
 # fields keep their defaults. Full set: accent, waiting, running, completed,
@@ -358,9 +364,9 @@ branch = "6"
 [keys]
 up = ["up", "k"]
 down = ["down", "j"]
-remove = ["ctrl+k"]              # live sessions ask for this key a second time
+remove = ["ctrl+x"]              # live sessions ask for this key a second time
 filter = ["ctrl+f", "/"]
-# up, down, confirm, cancel, quit, open, resume, rename, preview, quit_list,
+# up, down, confirm, cancel, quit, open, resume, rename, logs, preview, quit_list,
 # launch_attach, harness_picker, add_harness, set_default, modify_harness,
 # toggle_search, form_next, form_prev — all remappable the same way.
 
@@ -380,7 +386,7 @@ command           = "codex"
 full_screen       = true                  # attach uses a screen snapshot, not raw replay
 prompt_positional = true                  # codex "<prompt>" starts a session with it
 resume_args       = ["resume", "--last"]  # reattach to the most recent session
-idle_timeout      = 120                   # no native state; mark "waiting" when idle
+idle_timeout      = 120                   # no native state; mark non-actionable "idle"
 
 # Any additional harness works immediately with basic states:
 [harness.goose]
@@ -401,11 +407,14 @@ Defaults for opencode, pi, and codex are built in; the file is optional.
 
 ```
 rvr                       # dashboard (default command)
-rvr new [flags] "prompt"  # --harness, --repo (default "."), --title, --attach/--no-attach
-rvr list [--json]
+rvr new [flags] [prompt ...] # --harness, --repo (default "."), --title, --attach/--no-attach
+rvr list [--json]         # aliases: ls, ps
 rvr attach <id-or-prefix>
 rvr resume <id-or-prefix> # reattach if alive, else native-resume relaunch (D3)
 rvr kill   <id-or-prefix>
+rvr rm     <id-or-prefix>... [--force]
+rvr prune
+rvr logs   <id-or-prefix> [-f] # print or follow the raw session output
 rvr config                # print resolved config + paths
 rvr _supervise <id>       # hidden; internal supervisor entrypoint
 ```
@@ -419,14 +428,13 @@ Two layers, both driven by the arrow keys. `←` always means "back / up one lev
 ### Management view (dashboard)
 
 - Bubble Tea full-screen app. Sessions grouped by state, most actionable first:
-  **Needs input** → **Running** → **Completed** → **Cancelled** → **Failed**.
-- Each row: status glyph, title, harness, repo name, relative age, and (for waiting
-  sessions) the status detail.
+  **Needs input** → **Idle** → **Running** → **Completed** → **Cancelled** → **Failed**.
+- Each row: status glyph, title, short session ID, harness, repo name, relative
+  age, and (for waiting sessions) the status detail.
 The sessions and the **prompt box** form one navigable column; the prompt box is the
 last row. `↑`/`↓` move the selection. `k`/`j` are vim-style aliases while a
 session row is selected, and type normally in the prompt box. The selected row is
 framed with full-width top and bottom rules (no left/right sides) in the
-navigation accent color; the prompt box shows the same rules in grey when it is not the selected row.
 navigation accent color; the prompt box shows the same rules in grey when it is
 not the selected row.
 
@@ -443,11 +451,13 @@ not the selected row.
   scales to any number of harnesses. The composer label always names the harness the
   next session will use. `↑` moves up into the sessions.
 - **A session selected:** you are not typing, so action keys act on it — `→`/`Enter`
-  open the live window, `Ctrl+K` removes it (press `Ctrl+K` again first for live
-  sessions, so a live harness is not killed by one keypress), `r` resumes, `e`
-  **renames** (a rvr-only UI label; never touches the harness's own session), `s`
-  opens **settings** (the keybindings editor, below), and `↓`/`j` returns to the
-  prompt box. `Ctrl+C` always quits.
+  open a live window, or inspect stored logs for a terminal session without
+  relaunching it. `l` shows the stored log, `space` toggles a live peek and falls
+  back to the stored log for terminal sessions, `Ctrl+X` removes it (press
+  `Ctrl+X` again first for live sessions, so a live harness is not killed by one
+  keypress), `r` resumes, `e` **renames** (a rvr-only UI label; never touches the
+  harness's own session), `s` opens **settings** (the keybindings editor, below),
+  and `↓`/`j` returns to the prompt box. `Ctrl+C` always quits.
 - **Rename** opens an inline single-line editor pre-filled with the current title;
   Enter saves to the `sessions.title` column, Esc cancels.
 - Every dashboard key above is a default, not a hard-coded binding: the `[keys]`
@@ -460,7 +470,7 @@ not the selected row.
   the harness picker — listing every action with its current keys. `↑`/`↓` move and
   Enter starts a capture for the highlighted action; then press one or more keys
   (each added once) and Enter again to save them — so you can bind aliases like `x`
-  and `ctrl+k` together — or Esc to cancel. The binding is written to the `[keys]`
+  and `ctrl+x` together — or Esc to cancel. The binding is written to the `[keys]`
   table and takes effect immediately; Esc in the list closes the editor. It edits
   the same file `[keys]` documents, so changes made here and by hand are one and the
   same. Enter, Esc and the quit key drive the capture itself, so binding an action
@@ -471,20 +481,20 @@ not the selected row.
 
 ### Session window (interact)
 
-Opening a session enters a raw, byte-for-byte passthrough to the agent's own
+Opening a session enters a raw passthrough to the agent's own
 full-screen TUI — the "conversation window". This is where you *see and drive*
 opencode/pi; rvr supervises and proxies the PTY but never interprets the screen.
 On entry it replays the ring buffer and forces a SIGWINCH repaint, then proxies
-transparently. Every key — arrows, Escape, the agent's editing and leader bindings —
-reaches the harness unmodified, so the agent stays fully usable. Because the
-passthrough is total, stepping back out needs a key neither harness binds:
-**`ctrl+\`** (configurable `interact_exit_key`) detaches.
+transparently. Escape, modified arrows, and the agent's editing and leader
+bindings reach the harness unmodified. Unmodified Left is rvr's back gesture;
+the configurable **`ctrl+\`** is the alternative detach key.
 
 The dashboard enters interact mode by shelling out to `rvr attach <id>` via Bubble
 Tea's process exec, so the attach client owns the whole terminal and hands it back
-cleanly on `ctrl+\` — no input reader leaks back into the dashboard. If the session's
-supervisor is gone but a harness session ref was captured, opening it resumes
-natively instead.
+cleanly on `ctrl+\` — no input reader leaks back into the dashboard. If the
+supervisor is gone because the session reached a terminal state, opening it shows a
+read-only rendered excerpt of the stored raw log. Explicit `r` / `rvr resume`
+keeps the native relaunch path for resumable terminal sessions.
 
 `rvr attach <id>` from a plain shell is the same client, standalone; `ctrl+\`
 detaches and exits the process.
@@ -508,15 +518,16 @@ in a session window.
 
 ## 12. Explicitly deferred (post-v1)
 
-- Desktop notifications on needs-input/completed (first in line; trivial once state
-  events exist — osascript / notify-send).
-- Dashboard search & filters; multi-repo/workspace grouping.
+- Multi-repo/workspace grouping beyond path scoping.
 - Cost & token tracking (opencode API exposes usage; pi via session stats/JSONL).
 - Pause/resume via SIGSTOP (in-flight API calls time out while stopped — needs care).
 - Branch/worktree creation, session templates, queue manager, cross-provider
   migration, web dashboard, Windows.
 
-## 13. Build order
+## 13. Historical build order
+
+The following milestones are implemented; the sequence is retained as design
+history rather than an active roadmap.
 
 1. **Scaffold** — module, cobra skeleton, config loading, SQLite + migrations.
 2. **Supervisor core** — PTY spawn, ring buffer, socket protocol, detached launch;

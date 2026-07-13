@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"rvr/internal/config"
-	"rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 func TestNewInfererDisabledWhenUnconfigured(t *testing.T) {
@@ -61,7 +61,7 @@ func TestInfererIdleElapsed(t *testing.T) {
 
 func TestInfererIdleDisabledWhenZero(t *testing.T) {
 	// A pattern-only inferer has idle == 0; idleElapsed must never fire, else the
-	// idle checker would flip the session waiting on every tick.
+	// idle checker would flip the session idle on every tick.
 	in := newInferer(config.Harness{WaitingPattern: `\(y/n\)`}, silentLogger())
 	if in == nil {
 		t.Fatal("inferer should be enabled")

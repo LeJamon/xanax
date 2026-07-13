@@ -8,7 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // lineWidths returns the rendered (ANSI-aware) width of each line in s.
@@ -71,13 +71,14 @@ func TestHeaderCountsAccountForEverySession(t *testing.T) {
 	now := time.Now()
 	sessions := []*session.Session{
 		{ID: "wait0001", Title: "a", Status: session.StatusWaiting, CreatedAt: now},
+		{ID: "idle0001", Title: "idle", Status: session.StatusIdle, CreatedAt: now},
 		{ID: "fail0001", Title: "b", Status: session.StatusFailed, CreatedAt: now},
 		{ID: "fail0002", Title: "c", Status: session.StatusFailed, CreatedAt: now},
 		{ID: "canc0001", Title: "d", Status: session.StatusCancelled, CreatedAt: now},
 	}
 	m := newTestModel(sessions)
 	c := m.counts()
-	for _, want := range []string{"1 awaiting input", "0 working", "0 completed", "2 failed", "1 cancelled"} {
+	for _, want := range []string{"1 awaiting input", "1 idle", "0 working", "0 completed", "2 failed", "1 cancelled"} {
 		if !strings.Contains(stripANSI(c), want) {
 			t.Errorf("counts %q missing %q", stripANSI(c), want)
 		}

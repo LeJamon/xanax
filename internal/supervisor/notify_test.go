@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"testing"
 
-	"rvr/internal/session"
-	"rvr/internal/wire"
+	"github.com/LeJamon/rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/wire"
 )
 
 func silentLogger() *slog.Logger {
@@ -21,6 +21,7 @@ func TestNotificationFor(t *testing.T) {
 		wantFire   bool
 		wantInBody string
 	}{
+		{"running->idle", session.StatusRunning, session.StatusIdle, "", true, "ready"},
 		{"running->waiting", session.StatusRunning, session.StatusWaiting, "which API?", true, "which API?"},
 		{"waiting->waiting no repeat", session.StatusWaiting, session.StatusWaiting, "x", false, ""},
 		{"running->completed", session.StatusRunning, session.StatusCompleted, "", true, "finished"},

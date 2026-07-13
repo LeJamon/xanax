@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"rvr/internal/cli"
+	"github.com/LeJamon/rvr/internal/cli"
 )
 
 func main() {

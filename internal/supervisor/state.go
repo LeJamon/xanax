@@ -1,8 +1,8 @@
 package supervisor
 
 import (
-	"rvr/internal/adapter"
-	"rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/adapter"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // mapState maps a normalized adapter state event to a session status and
@@ -13,7 +13,7 @@ func mapState(ev adapter.StateEvent) (status session.Status, detail string, chan
 	case adapter.StateBusy:
 		return session.StatusRunning, "", true
 	case adapter.StateIdle:
-		return session.StatusWaiting, ev.Message, true
+		return session.StatusIdle, ev.Message, true
 	case adapter.StateNeedsInput:
 		return session.StatusWaiting, ev.Message, true
 	case adapter.StateError:

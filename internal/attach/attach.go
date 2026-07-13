@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/term"
 
-	"rvr/internal/wire"
+	"github.com/LeJamon/rvr/internal/wire"
 )
 
 // resetModes returns the client's terminal to a sane state when the

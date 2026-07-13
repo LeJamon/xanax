@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"time"
 
-	"rvr/internal/config"
-	"rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // StateKind is a normalized agent state, harness-agnostic.
@@ -19,7 +19,7 @@ type StateKind int
 
 const (
 	StateBusy       StateKind = iota // agent actively working
-	StateIdle                        // agent idle, awaiting input (task may be done)
+	StateIdle                        // agent idle or ready after finishing a turn
 	StateNeedsInput                  // agent explicitly asked the user something
 	StateError                       // harness reported a non-fatal error
 )

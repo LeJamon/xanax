@@ -1,14 +1,16 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"rvr/internal/config"
-	"rvr/internal/session"
-	"rvr/internal/store"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/store"
 )
 
 func TestCanResume(t *testing.T) {
@@ -23,11 +25,12 @@ func TestCanResume(t *testing.T) {
 		sess *session.Session
 		want bool
 	}{
-		{"captured ref always resumable", &session.Session{Harness: "opencode", HarnessSessionRef: "ses_1"}, true},
+		{"captured ref for configured harness", &session.Session{Harness: "opencode", HarnessSessionRef: "ses_1"}, true},
 		{"generic with resume_args", &session.Session{Harness: "goose"}, true},
 		{"generic without resume_args", &session.Session{Harness: "aider"}, false},
 		{"native without ref", &session.Session{Harness: "opencode"}, false},
 		{"unknown harness", &session.Session{Harness: "gone"}, false},
+		{"captured ref for unknown harness", &session.Session{Harness: "gone", HarnessSessionRef: "ses_1"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -85,6 +88,22 @@ func TestFailureDetailFallsBackToErrorEvent(t *testing.T) {
 
 	if got := failureDetail(st, sess); got != "adapter init failed: boom" {
 		t.Fatalf("failureDetail = %q, want error event message", got)
+	}
+}
+
+func TestWaitForSocketOrTerminalReturnsWhenSessionIsRemoved(t *testing.T) {
+	st, sess := failedSession(t, "")
+	if err := st.DeleteSession(sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	e := &env{paths: config.Paths{SocketDir: t.TempDir()}}
+	start := time.Now()
+	_, _, err := e.waitForSocketOrTerminal(st, sess.ID, time.Second)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("wait error = %v, want ErrNotFound", err)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("missing session wait took %s", elapsed)
 	}
 }
 

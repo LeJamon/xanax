@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"rvr/internal/ringbuf"
+	"github.com/LeJamon/rvr/internal/ringbuf"
 )
 
 func TestUnderCapacity(t *testing.T) {
