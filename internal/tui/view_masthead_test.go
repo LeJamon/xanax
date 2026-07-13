@@ -32,6 +32,21 @@ func countsLineIndex(header string) int {
 	return -1
 }
 
+func TestTerminalSquidLogoFootprint(t *testing.T) {
+	logo := terminalSquidLogo()
+	if got := lipgloss.Width(logo); got != 7 {
+		t.Fatalf("terminal squid logo width = %d, want 7", got)
+	}
+	if got := lipgloss.Height(logo); got != 4 {
+		t.Fatalf("terminal squid logo height = %d, want 4", got)
+	}
+
+	want := "╭─────╮\n│ >_  │\n╰┬─┬─┬╯\n ╰ ╰ ╰"
+	if got := stripANSI(logo); got != want {
+		t.Fatalf("terminal squid logo:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // TestViewNoLineExceedsWidth is the regression guard for the bottom-pin: no
 // rendered line may be wider than the terminal, or it would soft-wrap into
 // extra physical rows that lipgloss.Height can't see, making the gap math
@@ -102,12 +117,18 @@ func TestHeaderHidesEmptyBuckets(t *testing.T) {
 func TestHeaderOmitsEmptyPathRow(t *testing.T) {
 	withPath := newTestModel(sampleSessions())
 	withPath.path = "~/proj"
+	if got := lipgloss.Height(withPath.header()); got != 4 {
+		t.Errorf("header height with path = %d, want 4", got)
+	}
 	if got := countsLineIndex(withPath.header()); got != 2 {
 		t.Errorf("with a path, counts should be on line 2, got line %d", got)
 	}
 
 	noPath := newTestModel(sampleSessions())
 	noPath.path = ""
+	if got := lipgloss.Height(noPath.header()); got != 4 {
+		t.Errorf("header height without path = %d, want 4", got)
+	}
 	if got := countsLineIndex(noPath.header()); got != 1 {
 		t.Errorf("with no path, counts should move up to line 1 (no blank row), got line %d", got)
 	}

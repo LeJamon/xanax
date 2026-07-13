@@ -323,15 +323,21 @@ func (m model) renderPreview() string {
 	return label + "\n" + hRules(colMuted, m.width).Render(body)
 }
 
-// pill is the rvr logo: a small rounded capsule ("pink pill") whose three
-// rows sit to the left of the three-line title/path/counts block, mirroring the
-// masthead layout. Colored with the accent (pink/magenta by default).
-const pill = "▟█████▙\n" +
-	"███████\n" +
-	"▜█████▛"
+// terminalSquidLogo renders rvr's mascot in the configured accent, with its
+// terminal prompt following the configured text color. The logo is seven
+// columns wide; its fourth row gives the tentacles room to read.
+func terminalSquidLogo() string {
+	body := lipgloss.NewStyle().Foreground(colAccent)
+	prompt := lipgloss.NewStyle().Foreground(colWhite)
+
+	return body.Render("╭─────╮") + "\n" +
+		body.Render("│ ") + prompt.Render(">_") + body.Render("  │") + "\n" +
+		body.Render("╰┬─┬─┬╯") + "\n" +
+		body.Render(" ╰ ╰ ╰")
+}
 
 func (m model) header() string {
-	logo := lipgloss.NewStyle().Foreground(colAccent).Render(pill)
+	logo := terminalSquidLogo()
 
 	title := titleStyle.Render("rvr")
 	if m.deps.Version != "" {
