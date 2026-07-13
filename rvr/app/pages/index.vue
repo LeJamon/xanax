@@ -35,6 +35,7 @@ async function copyInstallCommand() {
       >rvr<span>✳</span></NuxtLink>
       <nav aria-label="Main navigation">
         <a href="#system">System</a>
+        <NuxtLink to="/docs">Docs</NuxtLink>
         <a
           href="https://github.com/LeJamon/rvr"
           target="_blank"
