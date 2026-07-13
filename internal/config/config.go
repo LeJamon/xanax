@@ -1,5 +1,5 @@
-// Package config resolves xanax configuration: built-in harness defaults
-// overlaid with the optional ~/.config/xanax/config.toml (SPEC.md §8).
+// Package config resolves rvr configuration: built-in harness defaults
+// overlaid with the optional ~/.config/rvr/config.toml (SPEC.md §8).
 package config
 
 import (
@@ -13,7 +13,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"xanax/internal/session"
+	"github.com/LeJamon/rvr/internal/attach"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // Adapter names accepted in harness configuration.
@@ -31,6 +32,11 @@ type Harness struct {
 	ResumeArgs []string          `toml:"resume_args,omitempty"`
 	Env        map[string]string `toml:"env,omitempty"`
 
+	// FullScreen forces attach replay through the rendered screen snapshot even
+	// when the harness is not currently in the terminal alternate screen. Use it
+	// for diff-rendered TUIs whose raw scrollback cannot reconstruct the chat.
+	FullScreen bool `toml:"full_screen,omitempty"`
+
 	// Prompt delivery for the generic adapter. PromptArg passes the initial
 	// prompt as a flag value (command … <prompt_arg> "<prompt>"). PromptPositional
 	// appends it as the last argument (command … "<prompt>"). With neither set
@@ -40,10 +46,10 @@ type Harness struct {
 	PromptPositional bool   `toml:"prompt_positional,omitempty"`
 
 	// Approximate state detection for the generic adapter (no native state
-	// channel). IdleTimeout marks the session "waiting" after that many seconds
-	// with no output; WaitingPattern is a regexp matched against output that
-	// marks it "waiting" immediately (e.g. a "(y/n)" prompt). Either resets to
-	// "running" when output resumes. Ignored by native adapters.
+	// channel). IdleTimeout marks the session non-actionably "idle" after that
+	// many seconds with no output; WaitingPattern is a regexp matched against
+	// output that marks it "waiting" immediately (e.g. a "(y/n)" prompt).
+	// Either resets to "running" when output resumes. Ignored by native adapters.
 	IdleTimeout    int    `toml:"idle_timeout,omitempty"`
 	WaitingPattern string `toml:"waiting_pattern,omitempty"`
 }
@@ -64,15 +70,15 @@ type Config struct {
 // CanResume reports whether a dead session can be relaunched: either a
 // harness-native session ref was captured (pi/opencode), or its harness has
 // resume_args configured (generic "continue last session in this repo"). This
-// is the single source of truth for both the `xanax resume` CLI path and the
+// is the single source of truth for both the `rvr resume` CLI path and the
 // dashboard's open-session action, so a terminal session (e.g. completed) that
 // resume can revive is never wrongly reported as unopenable.
 func (c *Config) CanResume(sess *session.Session) bool {
-	if sess.HarnessSessionRef != "" {
-		return true
-	}
 	h, ok := c.Harnesses[sess.Harness]
-	return ok && len(h.ResumeArgs) > 0
+	if !ok {
+		return false
+	}
+	return sess.HarnessSessionRef != "" || len(h.ResumeArgs) > 0
 }
 
 // Theme colors the dashboard TUI. Each value is an ANSI palette index ("0"–
@@ -123,9 +129,10 @@ type KeyMap struct {
 
 	// Session list — active while a session row is selected.
 	Open     Binding `toml:"open"`      // open the live session window
-	Remove   Binding `toml:"remove"`    // kill (if live) then delete from the list
+	Remove   Binding `toml:"remove"`    // remove the session; live sessions confirm first
 	Resume   Binding `toml:"resume"`    // resume the session
-	Rename   Binding `toml:"rename"`    // rename its xanax label
+	Rename   Binding `toml:"rename"`    // rename its rvr label
+	Logs     Binding `toml:"logs"`      // show the stored session log
 	Preview  Binding `toml:"preview"`   // toggle the screen peek
 	Filter   Binding `toml:"filter"`    // open the filter bar
 	Settings Binding `toml:"settings"`  // open the in-TUI keybindings editor
@@ -146,7 +153,7 @@ type KeyMap struct {
 	FormPrev Binding `toml:"form_prev"` // previous field
 }
 
-// Paths locates everything xanax reads or writes on disk (SPEC.md §7).
+// Paths locates everything rvr reads or writes on disk (SPEC.md §7).
 type Paths struct {
 	ConfigFile string
 	DataDir    string
@@ -170,13 +177,13 @@ func DefaultPaths() (Paths, error) {
 	if dataDir == "" {
 		dataDir = filepath.Join(home, ".local", "share")
 	}
-	data := filepath.Join(dataDir, "xanax")
+	data := filepath.Join(dataDir, "rvr")
 	return Paths{
-		ConfigFile: filepath.Join(cfgDir, "xanax", "config.toml"),
+		ConfigFile: filepath.Join(cfgDir, "rvr", "config.toml"),
 		DataDir:    data,
-		DBFile:     filepath.Join(data, "xanax.db"),
+		DBFile:     filepath.Join(data, "rvr.db"),
 		LogsDir:    filepath.Join(data, "logs"),
-		SocketDir:  filepath.Join("/tmp", fmt.Sprintf("xanax-%d", os.Getuid())),
+		SocketDir:  filepath.Join("/tmp", fmt.Sprintf("rvr-%d", os.Getuid())),
 	}, nil
 }
 
@@ -186,7 +193,7 @@ func DefaultPaths() (Paths, error) {
 func Default() *Config {
 	return &Config{
 		DefaultHarness:  "opencode",
-		InteractExitKey: `ctrl+\`,
+		InteractExitKey: "ctrl+q",
 		AutoResume:      true,
 		Notifications:   true,
 		Theme:           DefaultTheme(),
@@ -198,6 +205,7 @@ func Default() *Config {
 				Adapter:          AdapterGeneric,
 				Command:          "codex",
 				ResumeArgs:       []string{"resume", "--last"},
+				FullScreen:       true,
 				PromptPositional: true,
 				IdleTimeout:      120,
 			},
@@ -226,16 +234,17 @@ func DefaultTheme() Theme {
 // field-wise (mergeKeys), so an override changes only the actions it names.
 func DefaultKeys() KeyMap {
 	return KeyMap{
-		Up:      Binding{"up"},
-		Down:    Binding{"down"},
+		Up:      Binding{"up", "k"},
+		Down:    Binding{"down", "j"},
 		Confirm: Binding{"enter"},
 		Cancel:  Binding{"esc"},
 		Quit:    Binding{"ctrl+c"},
 
 		Open:     Binding{"enter", "right", "o"},
-		Remove:   Binding{"k", "ctrl+k"},
+		Remove:   Binding{"ctrl+x"},
 		Resume:   Binding{"r", "ctrl+r"},
 		Rename:   Binding{"e"},
+		Logs:     Binding{"l"},
 		Preview:  Binding{"space"},
 		Filter:   Binding{"/"},
 		Settings: Binding{"s"},
@@ -265,9 +274,10 @@ func (k KeyMap) Actions() []KeyAction {
 		{"cancel", "back, cancel, or clear an applied filter", k.Cancel},
 		{"quit", "confirm-then-exit, from any mode", k.Quit},
 		{"open", "open the selected session's window", k.Open},
-		{"remove", "kill (if live) then remove the session", k.Remove},
+		{"remove", "remove the session; confirms before killing live sessions", k.Remove},
 		{"resume", "resume the selected session", k.Resume},
-		{"rename", "rename the session's xanax label", k.Rename},
+		{"rename", "rename the session's rvr label", k.Rename},
+		{"logs", "show the selected session's stored log", k.Logs},
 		{"preview", "toggle the screen peek", k.Preview},
 		{"filter", "filter the session list", k.Filter},
 		{"settings", "open this keybindings editor", k.Settings},
@@ -303,6 +313,7 @@ func mergeKeys(base, over KeyMap) KeyMap {
 		Remove:        pick(base.Remove, over.Remove),
 		Resume:        pick(base.Resume, over.Resume),
 		Rename:        pick(base.Rename, over.Rename),
+		Logs:          pick(base.Logs, over.Logs),
 		Preview:       pick(base.Preview, over.Preview),
 		Filter:        pick(base.Filter, over.Filter),
 		Settings:      pick(base.Settings, over.Settings),
@@ -358,6 +369,7 @@ type fileHarness struct {
 	Args       []string          `toml:"args,omitempty"`
 	ResumeArgs []string          `toml:"resume_args,omitempty"`
 	Env        map[string]string `toml:"env,omitempty"`
+	FullScreen *bool             `toml:"full_screen,omitempty"`
 
 	PromptArg        string `toml:"prompt_arg,omitempty"`
 	PromptPositional *bool  `toml:"prompt_positional,omitempty"`
@@ -417,6 +429,9 @@ func Load(path string) (*Config, error) {
 		if fh.ResumeArgs != nil {
 			merged.ResumeArgs = fh.ResumeArgs
 		}
+		if fh.FullScreen != nil {
+			merged.FullScreen = *fh.FullScreen
+		}
 		if fh.PromptArg != "" {
 			merged.PromptArg = fh.PromptArg
 		}
@@ -441,6 +456,9 @@ func Load(path string) (*Config, error) {
 		if merged.Command == "" {
 			merged.Command = name
 		}
+		if fh.FullScreen == nil && merged.Adapter == AdapterGeneric && filepath.Base(merged.Command) == "codex" {
+			merged.FullScreen = true
+		}
 		cfg.Harnesses[name] = merged
 	}
 
@@ -453,6 +471,9 @@ func Load(path string) (*Config, error) {
 func (c *Config) validate() error {
 	if _, ok := c.Harnesses[c.DefaultHarness]; !ok {
 		return fmt.Errorf("default_harness %q is not a configured harness", c.DefaultHarness)
+	}
+	if _, err := attach.ParseExitKey(c.InteractExitKey); err != nil {
+		return err
 	}
 	for name, h := range c.Harnesses {
 		switch h.Adapter {

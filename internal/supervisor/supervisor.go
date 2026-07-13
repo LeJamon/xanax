@@ -6,6 +6,7 @@ package supervisor
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -18,13 +19,13 @@ import (
 
 	"github.com/creack/pty"
 
-	"xanax/internal/adapter"
-	"xanax/internal/config"
-	"xanax/internal/notify"
-	"xanax/internal/ringbuf"
-	"xanax/internal/session"
-	"xanax/internal/store"
-	"xanax/internal/wire"
+	"github.com/LeJamon/rvr/internal/adapter"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/notify"
+	"github.com/LeJamon/rvr/internal/ringbuf"
+	"github.com/LeJamon/rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/store"
+	"github.com/LeJamon/rvr/internal/wire"
 )
 
 const (
@@ -32,7 +33,13 @@ const (
 	rawLogCap     = 10 * 1024 * 1024
 	killGrace     = 5 * time.Second
 	refPollPeriod = 2 * time.Second
+	resumeOwnWait = 5 * time.Second
+	resumeOwnPoll = 25 * time.Millisecond
 )
+
+// ErrAlreadySupervised means another process owns this session's supervisor
+// lease. The losing process must exit without changing the session record.
+var ErrAlreadySupervised = errors.New("session already has a supervisor")
 
 // Options configures a supervisor run.
 type Options struct {
@@ -63,6 +70,8 @@ type Supervisor struct {
 	hub    *hub
 
 	listener net.Listener
+	owner    *Lease
+	clientWG sync.WaitGroup
 
 	sizeMu   sync.Mutex
 	curRows  uint16
@@ -116,6 +125,34 @@ func Run(opts Options) (int, error) {
 
 func (s *Supervisor) run() (int, error) {
 	sess := s.opts.Session
+	if err := s.acquireOwnership(); err != nil {
+		if errors.Is(err, ErrAlreadySupervised) {
+			return 0, err
+		}
+		s.fail("acquire supervisor ownership failed: " + err.Error())
+		return 1, err
+	}
+	defer s.releaseOwnership()
+
+	// A supervisor process may have been spawned just before the session was
+	// removed. Removal holds this same lease through DeleteSession, so reloading
+	// after ownership is acquired closes that scheduling window: a stale child
+	// observes the missing row and exits before it creates a socket or harness.
+	fresh, err := s.opts.Store.GetSession(sess.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 1, fmt.Errorf("reload session after acquiring ownership: %w", err)
+	}
+	// A duplicate resume child can outwait a fast first lifecycle. Never turn
+	// that completed lifecycle into another run merely because its lease became
+	// available before this process's bounded ownership wait expired.
+	if s.opts.Resume && fresh.Status.Terminal() {
+		return 0, nil
+	}
+	sess = fresh
+	s.opts.Session = fresh
 
 	a, err := adapter.New(sess, s.opts.Harness, adapter.Deps{Paths: s.opts.Paths, Logger: s.log})
 	if err != nil {
@@ -156,7 +193,11 @@ func (s *Supervisor) run() (int, error) {
 		Status:    string(session.StatusRunning),
 	})
 
-	s.markRunning()
+	if err := s.markRunning(); err != nil {
+		s.stopUnregisteredHarness()
+		s.fail("mark running failed: " + err.Error())
+		return 1, err
+	}
 	// Generic state inference: only when the harness exposes no native state
 	// channel and configured a heuristic.
 	if a.States() == nil {
@@ -195,6 +236,7 @@ func (s *Supervisor) run() (int, error) {
 		lastKind:        s.stateInfo.last,
 	})
 	s.finish(final, exitCode)
+	s.clientWG.Wait()
 	return exitCode, nil
 }
 
@@ -294,7 +336,11 @@ func (s *Supervisor) acceptClients() {
 		if err != nil {
 			return
 		}
-		go s.serveClient(newClient(conn))
+		s.clientWG.Add(1)
+		go func() {
+			defer s.clientWG.Done()
+			s.serveClient(newClient(conn))
+		}()
 	}
 }
 
@@ -311,6 +357,7 @@ func (s *Supervisor) serveClient(cl *client) {
 	if firstErr == nil && first.Type == wire.TypeSnapshotReq {
 		var r wire.Resize
 		_ = first.DecodeJSON(&r)
+		_ = cl.conn.SetWriteDeadline(time.Now().Add(exitFlushTimeout))
 		_ = wire.Write(cl.conn, wire.TypeSnapshot, []byte(s.hub.preview(int(r.Rows), int(r.Cols))))
 		cl.close() // peek is never registered as a client
 		return
@@ -324,7 +371,7 @@ func (s *Supervisor) serveClient(cl *client) {
 		}
 	}
 
-	s.hub.register(cl, s.altScreen.Load())
+	s.hub.register(cl, s.altScreen.Load() || s.opts.Harness.FullScreen)
 	defer s.hub.remove(cl)
 
 	for {
@@ -492,13 +539,28 @@ func (s *Supervisor) wait() int {
 
 // --- store transitions ---
 
-func (s *Supervisor) markRunning() {
+func (s *Supervisor) markRunning() error {
 	id := s.opts.Session.ID
 	s.curStatus = session.StatusRunning
 	if err := s.opts.Store.SetRuntime(id, os.Getpid(), s.socketPath(), session.StatusRunning); err != nil {
-		s.log.Warn("mark running failed", "err", err)
+		return err
 	}
 	s.opts.Store.RecordEvent(id, "started", map[string]any{"pid": os.Getpid()})
+	return nil
+}
+
+// stopUnregisteredHarness guarantees a process never outlives a failed
+// SetRuntime. At this point no pump, accept, or state goroutines have started,
+// so a hard process-group stop followed by Wait is the complete cleanup path.
+func (s *Supervisor) stopUnregisteredHarness() {
+	if s.cmd == nil || s.cmd.Process == nil {
+		return
+	}
+	_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)
+	if s.ptmx != nil {
+		_ = s.ptmx.Close()
+	}
+	_ = s.cmd.Wait()
 }
 
 func (s *Supervisor) finish(status session.Status, exitCode int) {
@@ -523,7 +585,7 @@ func (s *Supervisor) fail(msg string) {
 	id := s.opts.Session.ID
 	s.log.Error("supervisor startup failed", "msg", msg)
 	s.opts.Store.RecordEvent(id, "error", map[string]any{"message": msg})
-	_ = s.opts.Store.Finish(id, session.StatusFailed, 1)
+	_ = s.opts.Store.FinishWithDetail(id, session.StatusFailed, 1, msg)
 }
 
 // --- socket / raw log helpers ---
@@ -532,10 +594,39 @@ func (s *Supervisor) socketPath() string {
 	return filepath.Join(s.opts.Paths.SocketDir, s.opts.Session.ID+".sock")
 }
 
-func (s *Supervisor) listen() error {
-	if err := os.MkdirAll(s.opts.Paths.SocketDir, 0o700); err != nil {
-		return err
+func (s *Supervisor) acquireOwnership() error {
+	deadline := time.Now()
+	if s.opts.Resume {
+		// A concurrent prune may have selected the old terminal lifecycle and be
+		// finishing its conditional delete. Give that short-lived lease holder
+		// time to leave; normal duplicate supervisors still fail promptly.
+		deadline = deadline.Add(resumeOwnWait)
 	}
+	for {
+		lease, err := TryAcquireLease(s.socketPath())
+		if err == nil {
+			s.owner = lease
+			return nil
+		}
+		if !errors.Is(err, ErrAlreadySupervised) {
+			return err
+		}
+		if !s.opts.Resume || !time.Now().Before(deadline) {
+			return fmt.Errorf("%w: %s", ErrAlreadySupervised, s.opts.Session.ID)
+		}
+		time.Sleep(resumeOwnPoll)
+	}
+}
+
+func (s *Supervisor) releaseOwnership() {
+	if s.owner == nil {
+		return
+	}
+	s.owner.Release()
+	s.owner = nil
+}
+
+func (s *Supervisor) listen() error {
 	path := s.socketPath()
 	_ = os.Remove(path)
 	l, err := net.Listen("unix", path)

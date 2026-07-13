@@ -1,6 +1,6 @@
 package supervisor
 
-import "xanax/internal/session"
+import "github.com/LeJamon/rvr/internal/session"
 
 // notifyEvent describes a desktop notification to raise.
 type notifyEvent struct {
@@ -23,6 +23,12 @@ func notificationFor(prev, next session.Status, title, detail string) (notifyEve
 		name = "session"
 	}
 	switch next {
+	case session.StatusIdle:
+		body := detail
+		if body == "" {
+			body = "the agent is ready"
+		}
+		return notifyEvent{title: "Idle · " + name, body: body}, true
 	case session.StatusWaiting:
 		body := detail
 		if body == "" {

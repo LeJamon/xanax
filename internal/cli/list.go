@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 func newListCmd() *cobra.Command {
@@ -43,21 +47,35 @@ func newListCmd() *cobra.Command {
 				return enc.Encode(sessions)
 			}
 			if len(sessions) == 0 {
-				fmt.Fprintln(out, "No sessions. Start one with: xanax new \"your prompt\"")
+				fmt.Fprintln(out, "No sessions. Start one with: rvr new \"your prompt\"")
 				return nil
 			}
 			w := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tSTATUS\tHARNESS\tAGE\tREPO\tTITLE")
+			fmt.Fprintln(w, "ID\tSTATUS\tEXIT\tHARNESS\tAGE\tREPO\tTITLE\tDETAIL")
 			for _, s := range sessions {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-					shortID(s.ID), s.Status, s.Harness,
-					humanAge(s.CreatedAt), filepath.Base(s.RepoPath), s.Title)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					shortID(s.ID), s.Status, listExitCode(s), s.Harness,
+					humanAge(s.CreatedAt), filepath.Base(s.RepoPath), s.Title, listDetail(s))
 			}
 			return w.Flush()
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output sessions as JSON")
 	return cmd
+}
+
+func listExitCode(s *session.Session) string {
+	if s.ExitCode == nil {
+		return "-"
+	}
+	return strconv.Itoa(*s.ExitCode)
+}
+
+func listDetail(s *session.Session) string {
+	if detail := strings.TrimSpace(s.StatusDetail); detail != "" {
+		return detail
+	}
+	return "-"
 }
 
 func shortID(id string) string {

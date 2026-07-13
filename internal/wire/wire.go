@@ -78,13 +78,27 @@ func Write(w io.Writer, t Type, payload []byte) error {
 	var hdr [5]byte
 	hdr[0] = byte(t)
 	binary.BigEndian.PutUint32(hdr[1:], uint32(len(payload)))
-	if _, err := w.Write(hdr[:]); err != nil {
+	if err := writeFull(w, hdr[:]); err != nil {
 		return err
 	}
 	if len(payload) > 0 {
-		if _, err := w.Write(payload); err != nil {
+		if err := writeFull(w, payload); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func writeFull(w io.Writer, p []byte) error {
+	for len(p) > 0 {
+		n, err := w.Write(p)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
+		}
+		p = p[n:]
 	}
 	return nil
 }

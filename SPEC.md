@@ -1,13 +1,13 @@
-# Xanax — v1 Specification
+# rvr — v1 Specification
 
 Terminal-first session manager for autonomous AI coding agents. One place to launch,
 monitor, attach to, and manage agent sessions regardless of which harness runs them.
 
-Xanax is **not** an agent framework: no planning, no prompting, no memory, no tools.
+rvr is **not** an agent framework: no planning, no prompting, no memory, no tools.
 It is a control plane over existing harnesses (tmux + htop for AI agents).
 
 - Language: **Go** (pure-Go dependencies preferred, single static binary)
-- Platforms: macOS (arm64/x86_64), Linux (glibc)
+- Platforms: macOS and Linux (amd64/arm64 release artifacts)
 - v1 harnesses: **opencode**, **pi**, and **codex** (architecture stays
   harness-generic; codex uses the generic adapter)
 
@@ -19,8 +19,8 @@ It is a control plane over existing harnesses (tmux + htop for AI agents).
 |---|----------|------------|
 | D1 | State detection | Native side channels per harness (opencode SSE, pi extension); harnesses without a channel get running/exited only |
 | D2 | Supervision model | One detached supervisor **process per session** |
-| D3 | Resume semantics | Reattach while the supervisor is alive. Interrupted sessions (reboot, supervisor crash) are **auto-resumed on the next xanax launch** via the harness's native resume flag and the captured session ref (§6). `xanax resume` covers manual cases. |
-| D4 | v1 extras | Core loop only; desktop notifications next in line |
+| D3 | Resume semantics | Reattach while the supervisor is alive. Interrupted sessions (reboot, supervisor crash) are **auto-resumed on the next rvr launch** via the harness's native resume flag and the captured session ref (§6). `rvr resume` covers manual cases. |
+| D4 | v1 extras | Desktop notifications, filtering, previews, and keybinding management included |
 
 Rationale for D1/D2 in §5 and §4. Deferred features in §12.
 
@@ -35,7 +35,7 @@ harness versions we test against** and degrade gracefully on mismatch.
 - The TUI is client+server. Launching with `--port <n>` (default host 127.0.0.1)
   exposes an HTTP API on the live TUI process.
 - `GET /event` is an SSE stream: `session.status` (`idle` | `busy` | `retry`),
-  `session.idle`, `permission.asked`/`permission.replied`, `session.error`. This is a
+  `session.idle`, `permission.updated`, `session.error`. This is a
   reliable running/waiting signal. `GET /session/status` exists as a polling fallback
   (dev branch — verify against the release we pin).
 - Prompt injection into the TUI: `POST /tui/append-prompt` then `POST /tui/submit-prompt`.
@@ -50,21 +50,23 @@ harness versions we test against** and degrade gracefully on mismatch.
 - Interactive TUI takes the initial prompt as a positional arg: `pi "fix tests"`.
 - Extensions (TypeScript, loaded via `-e file.ts` or `~/.pi/agent/extensions/`)
   receive `agent_start`, `agent_end`, `session_start`, `session_shutdown`,
-  `tool_execution_*` events and can run arbitrary code — a tiny xanax hook extension
+  `tool_execution_*` events and can run arbitrary code — a tiny rvr hook extension
   is the reliable state channel for TUI mode.
 - Headless `--mode rpc` exists (JSON commands in, JSONL events out, `get_state`)
   — not needed for v1 but confirms the event vocabulary.
 - Sessions are JSONL trees under `~/.pi/agent/sessions/--<cwd-with-dashes>--/`;
   resume with `pi --session <path|id>`, `-c` for most recent in cwd.
 - **Escape is bound to "interrupt agent"**; most ctrl-keys are taken by emacs-style
-  editing bindings. `ctrl+\` appears free in both harnesses.
+  editing bindings. `ctrl+q` is free in the supported harness defaults and works on
+  QWERTY and AZERTY layouts.
 - Useful env: `PI_SKIP_VERSION_CHECK=1`, `PI_CODING_AGENT_DIR`, settings
   `quietStartup`. Exit codes undocumented.
 
 **Consequences:**
 1. The original spec's "Escape returns to dashboard" is impossible — Escape interrupts
-   the agent in both TUIs. Xanax uses **arrow-key navigation** for its own chrome and
-   reserves passthrough-exit for a key both harnesses leave free, **`ctrl+\`** (§10).
+   the agent in both TUIs. rvr uses **arrow-key navigation** for its own chrome and
+   reserves passthrough-exit for a key the supported harnesses leave free,
+   **`ctrl+q`** (§10).
 2. Terminal-output regex scraping would fight full-screen TUI escape sequences;
    both harnesses offer better channels — hence D1.
 3. `completed` vs `failed` cannot rest on exit codes; the state channel and
@@ -77,20 +79,22 @@ harness versions we test against** and degrade gracefully on mismatch.
 Three process roles, one binary:
 
 ```
-xanax (CLI / dashboard TUI)          — foreground, short- or long-lived
-  └── xanax _supervise <session-id>  — one detached process per session (hidden subcommand)
+rvr (CLI / dashboard TUI)          — foreground, short- or long-lived
+  └── rvr _supervise <session-id>  — one detached process per session (hidden subcommand)
         └── harness process           — opencode / pi inside a PTY
 ```
 
-- `xanax new` inserts the session row, then spawns `xanax _supervise <id>` detached
-  (setsid, stdio → per-session log file) and returns. Optionally attaches immediately
-  (`--attach`, default true when stdout is a TTY).
+- `rvr new` inserts the session row, then spawns `rvr _supervise <id>` detached
+  (setsid, stdio → per-session log file) and returns. Prompt words are joined
+  with spaces, a single `-` reads the prompt from stdin, and no prompt starts a
+  fresh interactive harness. Optionally attaches immediately (`--attach`, default
+  true when stdout is a TTY).
 - The **supervisor** owns: the PTY, an in-memory output ring buffer, the raw output
   log, the state side channel, a unix control socket, and all SQLite writes for its
   session. It outlives the UI; sessions keep running when the dashboard exits.
 - The **dashboard/CLI** reads SQLite for the session list and connects to each live
   session's socket for streaming (attach) and live state updates.
-- Crash isolation: one supervisor dying (or a xanax binary upgrade) never affects
+- Crash isolation: one supervisor dying (or a rvr binary upgrade) never affects
   other sessions. Liveness = "can I connect to its socket"; stale rows (pid gone,
   socket dead) are reconciled to `failed` with reason `orphaned` on discovery.
 
@@ -135,14 +139,14 @@ Unix socket server ──► attach / input / resize / subscribe / kill / info
   frames for PTY I/O. Messages: `hello`, `snapshot` (ring buffer replay), `output`,
   `input`, `resize`, `state`, `detach`, `kill`, `info`. Multiple simultaneous clients
   allowed (dashboard subscribes for state while a terminal is attached).
-- **Sockets** live in `/tmp/xanax-<uid>/<session-id>.sock` (kept short: macOS
+- **Sockets** live in `/tmp/rvr-<uid>/<session-id>.sock` (kept short: macOS
   `sun_path` limit is 104 bytes).
 - **Termination**: `kill` message → SIGTERM to the harness process group, SIGKILL
   after 5 s. Supervisor records exit code, final state, `ended_at`, then exits.
 - **Terminal fidelity (why harnesses don't crash).** The harness runs in a bare PTY,
   which is *not* a terminal emulator, so two things are handled explicitly:
   - **Stable `TERM`.** The harness is launched with `TERM=xterm-256color` and
-    `COLORTERM=truecolor`, overriding whatever xanax inherited. Without this a harness
+    `COLORTERM=truecolor`, overriding whatever rvr inherited. Without this a harness
     launched from Ghostty (`TERM=xterm-ghostty`) emits Ghostty-only sequences that
     break when rendered in, or attached from, any other terminal — the "crashes unless
     Ghostty" failure.
@@ -152,17 +156,11 @@ Unix socket server ──► attach / input / resize / subscribe / kill / info
     harness starts before any client attaches, the supervisor answers these itself
     while no client is connected; once a client attaches, its real terminal answers and
     the supervisor stays quiet (no double replies).
-- **Detach triggers.** The attach client detaches on `ctrl+\` (configurable
-  `interact_exit_key`) **or the Left arrow** — Left returns you to the dashboard and is
-  therefore not forwarded to the harness. Both triggers are recognized in every
-  encoding a harness may negotiate through the passthrough. The Left arrow: legacy
-  `ESC[D`, application cursor `ESCOD`, and the Kitty keyboard protocol's parameterized
-  forms (`ESC[1D`, `ESC[1;1D`) that harnesses like codex push (`CSI > u`). The exit key:
-  the raw control byte and, under the Kitty disambiguate flag, its `CSI u` form (`ctrl+\`
-  → `ESC[92;5u`). Only an *unmodified key press* detaches: `Ctrl`/`Alt`/`Shift`+Left pass
-  through for word navigation and selection, and repeat/release events are ignored so a
-  modifier released just before Left (reported as an unmodified Left release) does not
-  eject you mid-edit.
+- **Detach trigger.** The attach client detaches on `ctrl+q` (configurable
+  `interact_exit_key`). The trigger is recognized in the raw control-byte form and,
+  under the Kitty disambiguate flag, its `CSI u` form (`ctrl+q` → `ESC[113;5u`),
+  including alternate-layout metadata. Every other key, including arrows, Escape,
+  and pasted terminal control sequences, is forwarded to the harness.
 
 ## 5. Adapter architecture
 
@@ -195,24 +193,24 @@ type StateEvent struct {
   `--session <ref>` instead.
 - **Do not set `OPENCODE_SERVER_PASSWORD`.** Setting it makes opencode's *own* TUI
   client fail auth against its own server (401) and crash on startup — confirmed in
-  testing. opencode manages auth for its in-process client itself; xanax stays out of
+  testing. opencode manages auth for its in-process client itself; rvr stays out of
   it and watches the event stream unauthenticated.
 - `WatchState`: SSE client on `GET /event` (envelope `{id,type,properties}`);
   `session.status` busy/retry → AgentBusy, idle → AgentIdle,
   `session.idle` → AgentIdle, `permission.updated` → NeedsInput (title as detail),
   `session.error` → HarnessError. If the server returns 401/403 (auth required),
-  xanax **stops watching** — the harness still works, the session just degrades to
+  rvr **stops watching** — the harness still works, the session just degrades to
   running/exited with no fine-grained state.
 - `SessionRef`: first sessionID observed on the SSE stream.
-- Note: opencode's current `dev` branch uses `permission.updated` (not
-  `permission.asked`); verify against the pinned release.
+- Adapter contract tests cover the `permission.updated` event shape; live
+  release validation should record the upstream version used.
 
 ### pi adapter
 - Launch `pi -e <hook.mjs> "<prompt>"` with cwd = repo, `PI_SKIP_VERSION_CHECK=1`,
-  `XANAX_HOOK_SOCKET=<sock>`.
-- `hook.mjs` is embedded in the xanax binary (`go:embed`) and materialized under the
+  `RVR_HOOK_SOCKET=<sock>`.
+- `hook.mjs` is embedded in the rvr binary (`go:embed`) and materialized under the
   data dir. It is an ESM **default-export factory** (`export default function(pi)`)
-  — pi loads extensions through jiti. It opens `XANAX_HOOK_SOCKET` (`node:net`) and
+  — pi loads extensions through jiti. It opens `RVR_HOOK_SOCKET` (`node:net`) and
   reports `agent_start`/`agent_end`/`session_start`/`session_shutdown` as JSON lines.
   The session file path (for resume) is read from
   `ctx.sessionManager.getSessionFile()` inside the handlers, not from the payload.
@@ -227,15 +225,16 @@ writes a native adapter. `command`, `args`, `resume_args`, `env` from config.
 - **Prompt delivery:** `prompt_arg = "--flag"` passes the initial prompt as a flag
   value, `prompt_positional = true` appends it as the last argument, else it is typed
   into the PTY (a fallback that races full-screen TUIs). This is what makes the
-  composer/`xanax new` flow reliable for a generic harness.
+  composer/`rvr new` flow reliable for a generic harness.
 - **Resume:** with `resume_args` set to the harness's "continue last session in this
-  repo" flag (e.g. `-c`), a generic session is resumable — both `xanax resume` and
+  repo" flag (e.g. `-c`), a generic session is resumable — both `rvr resume` and
   auto-resume-after-reboot treat a configured `resume_args` as "resumable" even
   though generic captures no session ref. Precise when there is one session per repo.
 - **State inference (approximate, opt-in):** with no native state channel the
-  supervisor can still infer needs-input from the output stream — `idle_timeout = N`
-  marks the session *waiting* after N seconds of silence; `waiting_pattern = "regexp"`
-  marks it *waiting* on an output match (e.g. `\(y/n\)`). Either resets to *running*
+  supervisor can still infer state from the output stream — `idle_timeout = N`
+  marks the session non-actionably *idle* after N seconds of silence;
+  `waiting_pattern = "regexp"` marks it *waiting* on an output match (e.g.
+  `\(y/n\)`). Either resets to *running*
   when output resumes. Best-effort; a native adapter is authoritative.
 - **Add from the dashboard:** the harness picker's `+` opens a form (name / command /
   prompt arg / idle timeout / waiting pattern) that appends a generic `[harness.name]`
@@ -246,16 +245,19 @@ writes a native adapter. `command`, `args`, `resume_args`, `env` from config.
 ## 6. Session state model
 
 ```
-starting ──► running ⇄ waiting          (AgentBusy / AgentIdle+NeedsInput)
+starting ──► running ⇄ idle             (AgentBusy / AgentIdle)
+                    ⇄ waiting          (explicit input/permission needed)
                 │
                 ▼ (harness process exits)
    completed | failed | cancelled
 ```
 
-- `waiting` = agent idle and expecting user input (opencode `idle`/`permission.asked`,
-  pi `agent_end`). For an interactive TUI this includes "task done, prompt ready".
+- `idle` = the agent finished a turn or a generic idle timeout elapsed; it is
+  informative but not treated as an input request.
+- `waiting` = the harness explicitly reported an input or permission request, or a
+  configured output pattern matched.
 - Terminal states, decided at process exit:
-  - `cancelled` — xanax initiated the kill.
+  - `cancelled` — rvr initiated the kill.
   - `completed` — exit code 0 **and** last known agent state was idle.
   - `failed` — everything else (non-zero exit, exit while busy, unresumable orphan).
 - Every transition is appended to `events` (immutable log) and mirrored to
@@ -264,13 +266,13 @@ starting ──► running ⇄ waiting          (AgentBusy / AgentIdle+NeedsInpu
 ### Interrupted sessions & auto-resume
 
 A session whose supervisor is gone (reboot, crash, SIGKILL) while its status was
-`starting`/`running`/`waiting` is **interrupted**, not failed. A reconciliation pass
+`starting`/`running`/`idle`/`waiting` is **interrupted**, not failed. A reconciliation pass
 runs on dashboard startup and before `list`/`attach`/`resume`:
 
 1. For each session in a live state, probe its socket.
 2. Dead socket, `auto_resume = true` (default), and `harness_session_ref` present →
-   respawn `xanax _supervise` in resume mode; the session reappears, typically as
-   `waiting` (same behavior as Claude Code's persistent background agents).
+   respawn `rvr _supervise` in resume mode; the session reappears, typically as
+   `idle` (same behavior as Claude Code's persistent background agents).
 3. Dead socket and no session ref (harness never reported one) →
    `failed` with detail `orphaned`.
 
@@ -281,17 +283,17 @@ re-trigger agent work — so auto-resume is safe and spends no tokens.
 
 | What | Where |
 |------|-------|
-| Config | `~/.config/xanax/config.toml` |
-| Database | `~/.local/share/xanax/xanax.db` (SQLite, WAL, `modernc.org/sqlite`) |
-| Raw session output | `~/.local/share/xanax/logs/<session-id>.raw` |
-| Supervisor logs | `~/.local/share/xanax/logs/<session-id>.supervisor.log` |
-| pi hook extension | `~/.local/share/xanax/pi/hook.ts` (re-materialized per version) |
-| Sockets | `/tmp/xanax-<uid>/<session-id>.sock` |
+| Config | `~/.config/rvr/config.toml` |
+| Database | `~/.local/share/rvr/rvr.db` (SQLite, WAL, `modernc.org/sqlite`) |
+| Raw session output | `~/.local/share/rvr/logs/<session-id>.raw` |
+| Supervisor logs | `~/.local/share/rvr/logs/<session-id>.supervisor.log` |
+| pi hook extension | `~/.local/share/rvr/pi/hook.mjs` (re-materialized per version) |
+| Sockets | `/tmp/rvr-<uid>/<session-id>.sock` |
 
 XDG paths are used on both macOS and Linux (`XDG_CONFIG_HOME`/`XDG_DATA_HOME`
 respected) — consistent with how opencode and pi behave.
 
-### Schema (v1)
+### Schema (v2)
 
 ```sql
 CREATE TABLE sessions (
@@ -302,14 +304,15 @@ CREATE TABLE sessions (
   harness            TEXT NOT NULL,      -- config key: "opencode" | "pi" | ...
   harness_session_ref TEXT,              -- native resume handle
   initial_prompt     TEXT,
-  status             TEXT NOT NULL,      -- starting|running|waiting|completed|failed|cancelled
+  status             TEXT NOT NULL,      -- starting|running|idle|waiting|completed|failed|cancelled
   status_detail      TEXT,               -- e.g. permission question, failure reason
   pid                INTEGER,            -- supervisor pid
   socket_path        TEXT,
   exit_code          INTEGER,
   created_at         TEXT NOT NULL,      -- RFC3339 UTC
   updated_at         TEXT NOT NULL,
-  ended_at           TEXT
+  ended_at           TEXT,
+  lifecycle          INTEGER NOT NULL DEFAULT 1 -- incremented for each resume generation
 );
 CREATE TABLE events (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -330,11 +333,11 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ## 8. Configuration
 
 ```toml
-# ~/.config/xanax/config.toml
+# ~/.config/rvr/config.toml
 default_harness   = "opencode"
 auto_resume       = true         # revive interrupted sessions on launch (§6)
 notifications     = true         # desktop notifications on needs-input/completed/failed
-interact_exit_key = "ctrl+\\"    # step out of raw passthrough back to navigate mode (§10);
+interact_exit_key = "ctrl+q"     # step out of raw passthrough back to navigate mode (§10)
                                  # arrows/Escape are reserved by the harness TUIs
 
 # TUI colors — ANSI palette index ("0"–"255") or hex ("#rgb"/"#rrggbb"); omitted
@@ -349,16 +352,18 @@ branch = "6"
 # fires it, and an omitted action keeps its default. Keys use bubbletea names —
 # a rune ("o", "/", "+"), a named key ("enter", "up", "tab", "shift+tab"), a
 # control chord ("ctrl+c", "ctrl+o"), or "space". An empty list unbinds an
-# action. `xanax config` prints the full resolved set. `confirm`/`cancel` are the
+# action. `rvr config` prints the full resolved set. `confirm`/`cancel` are the
 # shared primary/back keys reused across the composer, picker, filter, rename and
 # harness form; the interact-mode detach key is separate (interact_exit_key).
 # Precedence: `quit` is matched before every mode, and `up`/`down` before the
 # session list and composer, so if you bind one of them to a key a context action
-# also uses (e.g. up = ["up", "k"] while remove keeps "k"), the global one wins.
+# also uses, the global one wins.
 [keys]
-remove = ["k", "ctrl+k"]         # override just the actions you want to remap
+up = ["up", "k"]
+down = ["down", "j"]
+remove = ["ctrl+x"]              # live sessions ask for this key a second time
 filter = ["ctrl+f", "/"]
-# up, down, confirm, cancel, quit, open, resume, rename, preview, quit_list,
+# up, down, confirm, cancel, quit, open, resume, rename, logs, preview, quit_list,
 # launch_attach, harness_picker, add_harness, set_default, modify_harness,
 # toggle_search, form_next, form_prev — all remappable the same way.
 
@@ -375,9 +380,10 @@ command = "pi"
 [harness.codex]
 adapter           = "generic"
 command           = "codex"
+full_screen       = true                  # attach uses a screen snapshot, not raw replay
 prompt_positional = true                  # codex "<prompt>" starts a session with it
 resume_args       = ["resume", "--last"]  # reattach to the most recent session
-idle_timeout      = 120                   # no native state; mark "waiting" when idle
+idle_timeout      = 120                   # no native state; mark non-actionable "idle"
 
 # Any additional harness works immediately with basic states:
 [harness.goose]
@@ -387,6 +393,8 @@ args        = ["session"]                # start goose's interactive session
 resume_args = ["session", "--resume"]    # resume the most recent session
 # A CLI that accepts the prompt as a flag can add prompt_arg = "--flag"
 # (or prompt_positional = true) to deliver it on the command line instead.
+# Diff-rendered TUIs can add full_screen = true to attach from a screen snapshot
+# instead of raw scrollback replay.
 
 ```
 
@@ -395,32 +403,40 @@ Defaults for opencode, pi, and codex are built in; the file is optional.
 ## 9. CLI
 
 ```
-xanax                       # dashboard (default command)
-xanax new [flags] "prompt"  # --harness, --repo (default "."), --title, --attach/--no-attach
-xanax list [--json]        # aliases: ls, ps
-xanax attach <id-or-prefix>
-xanax resume <id-or-prefix> # reattach if alive, else native-resume relaunch (D3)
-xanax kill   <id-or-prefix>
-xanax config                # print resolved config + paths
-xanax _supervise <id>       # hidden; internal supervisor entrypoint
+rvr                       # dashboard (default command)
+rvr new [flags] [prompt ...] # --harness, --repo (default "."), --title, --attach/--no-attach
+rvr list [--json]         # aliases: ls, ps
+rvr attach <id-or-prefix>
+rvr resume <id-or-prefix> # reattach if alive, else native-resume relaunch (D3)
+rvr kill   <id-or-prefix>
+rvr rm     <id-or-prefix>... [--force]
+rvr prune
+rvr logs   <id-or-prefix> [-f] # print or follow the raw session output
+rvr config                # print resolved config + paths
+rvr _supervise <id>       # hidden; internal supervisor entrypoint
 ```
 
 Session IDs accept unique prefixes everywhere (git-style).
 
 ## 10. Dashboard & attach UX
 
-Two layers, both driven by the arrow keys. `←` always means "back / up one level."
+The two input layers are deliberately separate: the dashboard owns its navigation
+bindings, while an attached session forwards harness input and reserves only the
+configured `interact_exit_key` for returning to the dashboard.
 
 ### Management view (dashboard)
 
 - Bubble Tea full-screen app. Sessions grouped by state, most actionable first:
-  **Needs input** → **Running** → **Completed** → **Cancelled** → **Failed**.
-- Each row: status glyph, title, harness, repo name, relative age, and (for waiting
-  sessions) the status detail.
+  **Needs input** → **Idle** → **Running** → **Completed** → **Cancelled** → **Failed**.
+- Each row: status glyph, title, short session ID, harness, repo name, relative
+  age, and (for waiting sessions) the status detail.
 The sessions and the **prompt box** form one navigable column; the prompt box is the
-last row. `↑`/`↓` always move the selection. The selected row is framed with full-width
-top and bottom rules (no left/right sides) in the navigation accent color; the prompt
-box shows the same rules in grey when it is not the selected row.
+last row. When the prompt is empty, `↑`/`↓` move the selection. `k`/`j` are
+vim-style aliases while a session row is selected. While the prompt contains
+text, `↑`/`↓` move its cursor between rows without leaving the box, and Esc clears
+the draft. The selected row is framed with full-width top and bottom rules (no
+left/right sides) in the navigation accent color; the prompt box shows the same
+rules in grey when it is not the selected row.
 
 - **Prompt box selected:** typed/pasted text goes into it; **Enter** launches a new
   session in the selected harness (current repo, no attach, so you can fire off
@@ -428,31 +444,35 @@ box shows the same rules in grey when it is not the selected row.
   the harness's own input, where its native syntax (`/commands`, `@file` completion,
   palettes) is fully available; with an empty prompt it opens a fresh harness. (**Alt+Enter**
   is a best-effort alias that works only on terminals reporting it as a single key; Ctrl+O
-  is the portable binding.) xanax
+  is the portable binding.) rvr
   deliberately does not re-implement harness syntax in its own composer (prompts are
   delivered verbatim; interactive syntax belongs to the harness). **Tab** opens the
   harness picker: a list of all configured harnesses (`↑`/`↓` + Enter, Esc cancels) —
   scales to any number of harnesses. The composer label always names the harness the
-  next session will use. `↑` moves up into the sessions.
-- **A session selected:** you are not typing, so plain letters act on it — `→`/`Enter`
-  open the live window, `k` remove (terminate if live, then delete from the list),
-  `r` resume, `e` **rename** (a xanax-only UI label; never touches the harness's own
-  session), `s` **settings** (open the keybindings editor, below), `↓` returns to the
-  prompt box. `Ctrl+K`/`Ctrl+R` are aliases for terminals that deliver them; `Ctrl+C`
-  always quits.
+  next session will use. When the prompt is empty, `↑` moves up into the sessions.
+- **A session selected:** you are not typing, so action keys act on it — `→`/`Enter`
+  open a live window, or inspect stored logs for a terminal session without
+  relaunching it. `l` shows the stored log, `space` toggles a live peek and falls
+  back to the stored log for terminal sessions, `Ctrl+X` removes it (press
+  `Ctrl+X` again first for live sessions, so a live harness is not killed by one
+  keypress), `r` resumes, `e` **renames** (a rvr-only UI label; never touches the
+  harness's own session), `s` opens **settings** (the keybindings editor, below),
+  and `↓`/`j` returns to the prompt box. `Ctrl+C` always quits.
 - **Rename** opens an inline single-line editor pre-filled with the current title;
   Enter saves to the `sessions.title` column, Esc cancels.
 - Every dashboard key above is a default, not a hard-coded binding: the `[keys]`
   table in the config (§8) remaps any of them, and the footer hints follow suit.
   Only the interact-mode detach key lives elsewhere (`interact_exit_key`), since
   it is read inside the raw passthrough rather than the dashboard. `quit` is
-  resolved before any mode and `up`/`down` before the session list and composer,
-  so a key bound to one of those wins over a context action bound to the same key.
+  resolved before any mode and `up`/`down` before the session list. In the
+  composer, `up`/`down` move the selection only when the draft is empty; otherwise
+  the textarea handles them. A navigation binding wins over a session context
+  action bound to the same key.
 - **Keybindings editor** (`s`): a centered, searchable modal — the same style as
   the harness picker — listing every action with its current keys. `↑`/`↓` move and
   Enter starts a capture for the highlighted action; then press one or more keys
-  (each added once) and Enter again to save them — so you can bind aliases like `k`
-  and `ctrl+k` together — or Esc to cancel. The binding is written to the `[keys]`
+  (each added once) and Enter again to save them — so you can bind aliases like `x`
+  and `ctrl+x` together — or Esc to cancel. The binding is written to the `[keys]`
   table and takes effect immediately; Esc in the list closes the editor. It edits
   the same file `[keys]` documents, so changes made here and by hand are one and the
   same. Enter, Esc and the quit key drive the capture itself, so binding an action
@@ -463,26 +483,27 @@ box shows the same rules in grey when it is not the selected row.
 
 ### Session window (interact)
 
-Opening a session enters a raw, byte-for-byte passthrough to the agent's own
+Opening a session enters a raw passthrough to the agent's own
 full-screen TUI — the "conversation window". This is where you *see and drive*
-opencode/pi; xanax supervises and proxies the PTY but never interprets the screen.
+opencode/pi; rvr supervises and proxies the PTY but never interprets the screen.
 On entry it replays the ring buffer and forces a SIGWINCH repaint, then proxies
 transparently. Every key — arrows, Escape, the agent's editing and leader bindings —
 reaches the harness unmodified, so the agent stays fully usable. Because the
 passthrough is total, stepping back out needs a key neither harness binds:
-**`ctrl+\`** (configurable `interact_exit_key`) detaches.
+**`ctrl+q`** (configurable `interact_exit_key`) detaches.
 
-The dashboard enters interact mode by shelling out to `xanax attach <id>` via Bubble
+The dashboard enters interact mode by shelling out to `rvr attach <id>` via Bubble
 Tea's process exec, so the attach client owns the whole terminal and hands it back
-cleanly on `ctrl+\` — no input reader leaks back into the dashboard. If the session's
-supervisor is gone but a harness session ref was captured, opening it resumes
-natively instead.
+cleanly on `ctrl+q` — no input reader leaks back into the dashboard. If the session's
+supervisor is gone because the session reached a terminal state, opening it shows a
+read-only rendered excerpt of the stored raw log. Explicit `r` / `rvr resume`
+keeps the native relaunch path for resumable terminal sessions.
 
-`xanax attach <id>` from a plain shell is the same client, standalone; `ctrl+\`
+`rvr attach <id>` from a plain shell is the same client, standalone; `ctrl+q`
 detaches and exits the process.
 
-This keeps xanax's chrome (composer + list) from ever stealing keys from the agent
-while the user is actually driving it: keys only reach xanax's UI when you're *not*
+This keeps rvr's chrome (composer + list) from ever stealing keys from the agent
+while the user is actually driving it: keys only reach rvr's UI when you're *not*
 in a session window.
 
 ## 11. Libraries
@@ -500,15 +521,16 @@ in a session window.
 
 ## 12. Explicitly deferred (post-v1)
 
-- Desktop notifications on needs-input/completed (first in line; trivial once state
-  events exist — osascript / notify-send).
-- Dashboard search & filters; multi-repo/workspace grouping.
+- Multi-repo/workspace grouping beyond path scoping.
 - Cost & token tracking (opencode API exposes usage; pi via session stats/JSONL).
 - Pause/resume via SIGSTOP (in-flight API calls time out while stopped — needs care).
 - Branch/worktree creation, session templates, queue manager, cross-provider
   migration, web dashboard, Windows.
 
-## 13. Build order
+## 13. Historical build order
+
+The following milestones are implemented; the sequence is retained as design
+history rather than an active roadmap.
 
 1. **Scaffold** — module, cobra skeleton, config loading, SQLite + migrations.
 2. **Supervisor core** — PTY spawn, ring buffer, socket protocol, detached launch;

@@ -1,13 +1,12 @@
 // Package attach is the raw terminal client that proxies a user's terminal to
 // a session's PTY over its unix socket (SPEC.md §10). It runs as its own
-// process: standalone for `xanax attach`/`new`, and shelled out to by the
+// process: standalone for `rvr attach`/`new`, and shelled out to by the
 // dashboard when entering interact mode. Owning the whole process means the
 // terminal is always restored cleanly and no input reader leaks back into the
 // dashboard.
 package attach
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -18,7 +17,7 @@ import (
 
 	"golang.org/x/term"
 
-	"xanax/internal/wire"
+	"github.com/LeJamon/rvr/internal/wire"
 )
 
 // resetModes returns the client's terminal to a sane state when the
@@ -56,10 +55,12 @@ const (
 	Disconnected                // supervisor socket closed unexpectedly
 )
 
+const defaultExitKey byte = 0x11 // ctrl+q
+
 // Options configures an attach session.
 type Options struct {
 	SocketPath string
-	ExitKey    byte     // byte that detaches (default ctrl+\, 0x1c)
+	ExitKey    byte     // control byte that detaches (default ctrl+q, 0x11)
 	In         *os.File // defaults to os.Stdin
 	Out        *os.File // defaults to os.Stdout
 }
@@ -83,7 +84,7 @@ func runConnected(opts Options, conn net.Conn) (Result, error) {
 		opts.Out = os.Stdout
 	}
 	if opts.ExitKey == 0 {
-		opts.ExitKey = 0x1c
+		opts.ExitKey = defaultExitKey
 	}
 
 	restore, err := makeRaw(opts.In)
@@ -237,16 +238,12 @@ func watchWinch(conn net.Conn, out *os.File) func() {
 	}
 }
 
-// findDetach returns the offset and length of the earliest detach trigger in
-// data — the configured exit key or an unmodified Left-arrow key press — or
-// (-1, 0) if none is present. Left returns the user to the dashboard.
+// findDetach returns the offset and length of the earliest configured exit-key
+// trigger in data, or (-1, 0) if none is present.
 //
-// Both triggers are recognized in every encoding a harness may negotiate
-// through the passthrough. Once a harness (codex) pushes the Kitty keyboard
-// protocol (CSI > u), the terminal re-encodes the Left arrow as a parameterized
-// CSI and a control chord like the exit key ctrl+\ as a CSI-u sequence
-// (ESC[92;5u) rather than the raw 0x1c byte, so a raw-byte scan alone would miss
-// both.
+// The trigger is recognized in both its raw control-byte form and the CSI-u
+// form emitted after a harness enables the Kitty keyboard protocol. Every other
+// key, including every arrow encoding, is forwarded to the harness unchanged.
 //
 // The scan is left-to-right so the caller can forward the bytes preceding the
 // trigger before detaching.
@@ -258,122 +255,14 @@ func findDetach(data []byte, exitKey byte) (idx, length int) {
 		if n := exitKeyDetachLen(data[i:], exitKey); n > 0 {
 			return i, n
 		}
-		if n := leftArrowDetachLen(data[i:]); n > 0 {
-			return i, n
-		}
 	}
 	return -1, 0
 }
 
-// leftArrowDetachLen reports the length of an *unmodified* Left-arrow key press
-// at the start of data, or 0 if data does not begin with one.
-//
-// The Left arrow reaches the client in several encodings depending on the
-// terminal mode the harness negotiated through the passthrough:
-//
-//	ESC O D                  SS3 / application-cursor-keys mode (DECCKM)
-//	ESC [ D                  legacy CSI
-//	ESC [ 1 D                Kitty form with the key code and no modifier
-//	ESC [ 1 ; <m>[:<e>] D    Kitty keyboard protocol — harnesses like codex push
-//	                         it (CSI > u); <m> is 1+modifier bitmask, <e> the
-//	                         press(1)/repeat(2)/release(3) event.
-//
-// Only an unmodified press detaches. Left with a modifier (Ctrl/Alt/Shift) is
-// passed through for word navigation and selection, and repeat/release events
-// are ignored — otherwise a modifier released a beat before Left (which reports
-// the Left release with no modifiers) would eject the user mid-edit. The key
-// code, when present, must be the arrow's own code 1; an ANSI cursor-motion
-// sequence such as ESC[5D (cursor-back-5, common in pasted output) shares the
-// final 'D' but is not the Left key.
-//
-// A sequence still being assembled across a read boundary (no final byte yet)
-// returns 0; the partial prefix is then forwarded to the harness and the detach
-// is missed — an accepted limitation, as with the legacy 3-byte forms.
-func leftArrowDetachLen(data []byte) int {
-	if len(data) < 3 || data[0] != 0x1b {
-		return 0
-	}
-	switch data[1] {
-	case 'O': // SS3: ESC O D
-		if data[2] == 'D' {
-			return 3
-		}
-		return 0
-	case '[': // CSI: ESC [ <params> D, params in [0-9;:]
-		i := 2
-		for i < len(data) && isCSIParam(data[i]) {
-			i++
-		}
-		if i >= len(data) || data[i] != 'D' {
-			return 0 // wrong final byte, or partial sequence
-		}
-		if !leftArrowUnmodifiedPress(data[2:i]) {
-			return 0
-		}
-		return i + 1
-	default:
-		return 0
-	}
-}
-
-func isCSIParam(b byte) bool {
-	return (b >= '0' && b <= '9') || b == ';' || b == ':'
-}
-
-// leftArrowUnmodifiedPress reports whether a CSI cursor-key parameter list (the
-// bytes between "ESC [" and the final "D") denotes the Left arrow with no
-// modifiers held, on a key-press event.
-//
-// The list holds up to two ';'-separated fields — the key code and the modifier:
-//   - Key code: the leading field, before any ':' alternate-key subfields. Empty
-//     (legacy "ESC [ D") or "1" is the Left arrow; any other code is a different
-//     key and never detaches.
-//   - Modifier: the second field, before any ':' event subfield. It is
-//     1+bitmask, so no modifier (ignoring lock states) means an empty field or 1.
-//     The event subfield is press(1)/repeat(2)/release(3), defaulting to press;
-//     only a press detaches.
-func leftArrowUnmodifiedPress(params []byte) bool {
-	keyField, modField, hasMod := bytes.Cut(params, []byte{';'})
-
-	keyCode, _, _ := bytes.Cut(keyField, []byte{':'})
-	if len(keyCode) != 0 && string(keyCode) != "1" {
-		return false
-	}
-	if !hasMod {
-		return true
-	}
-
-	// A trailing text field (ESC [ code ; mod ; text) never accompanies an
-	// arrow; keep only the modifier field.
-	modField, _, _ = bytes.Cut(modField, []byte{';'})
-	mod, event, _ := bytes.Cut(modField, []byte{':'})
-	if !modifiersClear(mod) {
-		return false // a modifier is held → pass through
-	}
-	return len(event) == 0 || string(event) == "1" // press only
-}
-
-// modifiersClear reports whether a Kitty modifier field (the value 1+bitmask, an
-// empty field meaning none) carries no active modifier once lock states are
-// ignored. Shift, Alt, Ctrl, Super, Hyper and Meta block a Left detach; the
-// caps_lock (64) and num_lock (128) bits do not, so a plain Left still detaches
-// with Num Lock on (which the terminal reports as ESC[1;129D).
-func modifiersClear(mod []byte) bool {
-	if len(mod) == 0 {
-		return true
-	}
-	n, _, ok := parseCSIInt(mod, 0)
-	if !ok || n < 1 {
-		return false
-	}
-	const lockBits = 0b11000000 // caps_lock (64) | num_lock (128)
-	return (n-1)&^lockBits == 0
-}
-
 // exitKeyDetachLen reports the length of a Kitty keyboard-protocol CSI-u
 // encoding of the configured exit key at the start of data, or 0. Under the
-// disambiguate flag a control chord such as ctrl+\ arrives as "ESC [ 92 ; 5 u"
-// (codepoint ; 1+modifier bitmask) instead of the raw 0x1c byte the caller
+// disambiguate flag a control chord such as ctrl+q arrives as "ESC [ 113 ; 5 u"
+// (codepoint ; 1+modifier bitmask) instead of the raw 0x11 byte the caller
 // matches directly, so once a harness pushes the protocol the raw scan alone
 // misses it. Only control-byte exit keys are re-encoded this way; a printable
 // exit key keeps its literal byte.
@@ -384,8 +273,40 @@ func exitKeyDetachLen(data []byte, exitKey byte) int {
 	if len(data) < 4 || data[0] != 0x1b || data[1] != '[' {
 		return 0
 	}
-	cp, i, ok := parseCSIInt(data, 2)
-	if !ok || i >= len(data) || data[i] != ';' {
+	primary, i, ok := parseCSIInt(data, 2)
+	if !ok {
+		return 0
+	}
+	// Kitty can append the shifted and base-layout key codepoints to the
+	// primary codepoint. The configured chord names the logical character, so
+	// the primary stays authoritative (AZERTY ctrl+a must not become ctrl+q just
+	// because that key occupies Q's position on a QWERTY layout).
+	var shifted int
+	var hasShifted bool
+	if i < len(data) && data[i] == ':' {
+		i++
+		if i >= len(data) {
+			return 0
+		}
+		if data[i] == ':' { // omitted shifted key, followed by base-layout key
+			i++
+			if _, i, ok = parseCSIInt(data, i); !ok {
+				return 0
+			}
+		} else {
+			if shifted, i, ok = parseCSIInt(data, i); !ok {
+				return 0
+			}
+			hasShifted = true
+			if i < len(data) && data[i] == ':' {
+				i++
+				if _, i, ok = parseCSIInt(data, i); !ok {
+					return 0
+				}
+			}
+		}
+	}
+	if i >= len(data) || data[i] != ';' {
 		return 0
 	}
 	mods, i, ok := parseCSIInt(data, i+1)
@@ -401,49 +322,115 @@ func exitKeyDetachLen(data []byte, exitKey byte) int {
 	if i >= len(data) || data[i] != 'u' {
 		return 0
 	}
-	const ctrlBit = 0b100 // Kitty modifier bit for Ctrl
-	if mods < 1 || (mods-1)&ctrlBit == 0 || event != 1 {
-		return 0 // the exit key needs Ctrl held, on a press event
+	const (
+		shiftBit    = 0b00000001
+		ctrlBit     = 0b00000100
+		capsLockBit = 0b01000000
+		numLockBit  = 0b10000000
+	)
+	if mods < 1 || event != 1 {
+		return 0
 	}
-	// Ctrl+<cp> folds to a C0 control byte via cp&0x1f (matching ParseExitKey).
-	if cp > 0x7f || byte(cp)&0x1f != exitKey {
+	activeMods := mods - 1
+	if hasShifted && activeMods&shiftBit == 0 {
+		return 0 // a shifted alternate is valid only while Shift is held
+	}
+
+	expected := exitKeyCodepoint(exitKey)
+	directMatch := primary == expected
+	shiftedMatch := activeMods&shiftBit != 0 &&
+		(hasShifted && shifted == expected || !hasShifted && matchesUSShiftedControl(exitKey, primary))
+	allowedMods := ctrlBit | capsLockBit | numLockBit
+	if shiftedMatch && !directMatch {
+		allowedMods |= shiftBit
+	}
+	if activeMods&ctrlBit == 0 || activeMods & ^allowedMods != 0 || !directMatch && !shiftedMatch {
 		return 0
 	}
 	return i + 1
 }
 
+// matchesUSShiftedControl covers the two accepted control characters whose
+// common keys need Shift even when alternate-key reporting is not enabled.
+func matchesUSShiftedControl(exitKey byte, primary int) bool {
+	return exitKey == 0x1e && primary == '6' || // ctrl+^
+		exitKey == 0x1f && primary == '-' // ctrl+_
+}
+
+func exitKeyCodepoint(exitKey byte) int {
+	if exitKey >= 0x01 && exitKey <= 0x1a {
+		return int('a' + exitKey - 1)
+	}
+	switch exitKey {
+	case 0x1c:
+		return '\\'
+	case 0x1d:
+		return ']'
+	case 0x1e:
+		return '^'
+	case 0x1f:
+		return '_'
+	default:
+		return -1
+	}
+}
+
 // parseCSIInt reads a base-10 CSI parameter from data starting at i, returning
 // its value, the index just past the digits, and whether any digit was present.
 func parseCSIInt(data []byte, i int) (val, next int, ok bool) {
+	const maxCSIParameter = 0x10ffff
+
 	start := i
 	for i < len(data) && data[i] >= '0' && data[i] <= '9' {
-		val = val*10 + int(data[i]-'0')
+		digit := int(data[i] - '0')
+		if val > (maxCSIParameter-digit)/10 {
+			return 0, i, false
+		}
+		val = val*10 + digit
 		i++
 	}
 	return val, i, i > start
 }
 
-// ParseExitKey converts a config key spec like "ctrl+\" to its control byte.
-// Unrecognized specs fall back to ctrl+\ (0x1c).
-func ParseExitKey(spec string) byte {
+const exitKeyAcceptedForms = `ctrl+a through ctrl+z except ctrl+h, ctrl+i, ctrl+j, ctrl+m; or ctrl+\, ctrl+], ctrl+^, ctrl+_ (the ctrl+ prefix may be omitted)`
+
+// ParseExitKey converts a config key spec like "ctrl+q" to its control byte.
+func ParseExitKey(spec string) (byte, error) {
 	s := strings.ToLower(strings.TrimSpace(spec))
-	s = strings.TrimPrefix(s, "ctrl+")
-	if len(s) != 1 {
-		return 0x1c
+	key := strings.TrimPrefix(s, "ctrl+")
+	if len(key) != 1 {
+		return 0, fmt.Errorf("interact_exit_key %q is invalid (want %s)", spec, exitKeyAcceptedForms)
 	}
-	c := s[0]
+	c := key[0]
+	var b byte
 	switch {
 	case c >= 'a' && c <= 'z':
-		return c - 'a' + 1
+		b = c - 'a' + 1
 	case c == '\\':
-		return 0x1c
+		b = 0x1c
 	case c == ']':
-		return 0x1d
+		b = 0x1d
 	case c == '^':
-		return 0x1e
+		b = 0x1e
 	case c == '_':
-		return 0x1f
+		b = 0x1f
 	default:
-		return 0x1c
+		return 0, fmt.Errorf("interact_exit_key %q is invalid (want %s)", spec, exitKeyAcceptedForms)
 	}
+	if name := unsafeExitKeyName(b); name != "" {
+		return 0, fmt.Errorf("interact_exit_key %q maps to %s; choose a chord that will not detach during normal input", spec, name)
+	}
+	return b, nil
+}
+
+func unsafeExitKeyName(b byte) string {
+	switch b {
+	case '\r', '\n':
+		return "Enter"
+	case '\t':
+		return "Tab"
+	case '\b':
+		return "Backspace"
+	}
+	return ""
 }

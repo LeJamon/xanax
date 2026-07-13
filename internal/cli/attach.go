@@ -1,18 +1,20 @@
 package cli
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 
-	"xanax/internal/attach"
+	"github.com/LeJamon/rvr/internal/attach"
 )
 
 func newAttachCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "attach <session-id>",
 		Short: "Attach to a running session",
-		Args:  cobra.ExactArgs(1),
+		Long: `Attach to a running session.
+
+Inside the session window, press the configured detach key (ctrl+q by default).
+The session keeps running after you detach.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			e, err := loadEnv()
 			if err != nil {
@@ -29,12 +31,7 @@ func newAttachCmd() *cobra.Command {
 				return err
 			}
 			if !attach.Alive(e.socketPath(sess.ID)) {
-				if sess.Status.Terminal() {
-					return fmt.Errorf("session %s has ended (%s); use `xanax resume %s`",
-						shortID(sess.ID), sess.Status, shortID(sess.ID))
-				}
-				return fmt.Errorf("session %s is not reachable; use `xanax resume %s`",
-					shortID(sess.ID), shortID(sess.ID))
+				return e.sessionUnavailableError(st, sess)
 			}
 			return runAttach(e, sess.ID)
 		},

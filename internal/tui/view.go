@@ -8,8 +8,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // pickerModalWidth returns the modal's content width (the columns between the
@@ -206,23 +206,40 @@ func (m model) View() string {
 	if m.width == 0 {
 		return "loading…"
 	}
-	top := m.header() + "\n\n" + m.renderList()
+	fit := lipgloss.NewStyle().MaxWidth(m.width)
+	header := fit.Render(m.header())
+	bottom := m.inputBlock() + "\n" + m.footer()
+	bottom = fit.Render(bottom)
+	preview := ""
 	if p := m.renderPreview(); p != "" {
-		top += "\n" + p
+		preview = fit.Render(p)
+	}
+
+	listRows := m.listRowsAvailable(header, bottom, preview)
+	top := header + "\n\n" + m.renderList(listRows)
+	if preview != "" {
+		top += "\n" + preview
 	}
 	// Clamp every line to the terminal width so nothing soft-wraps.
-	fit := lipgloss.NewStyle().MaxWidth(m.width)
 	top = fit.Render(top)
 
 	if modal := m.centeredModal(); modal != "" {
 		return m.renderCenteredModal(top, modal)
 	}
 
-	bottom := m.inputBlock() + "\n" + m.footer()
-	bottom = fit.Render(bottom)
-
 	gap := max(1, m.height-lipgloss.Height(top)-lipgloss.Height(bottom)+1)
 	return top + strings.Repeat("\n", gap) + bottom
+}
+
+func (m model) listRowsAvailable(header, bottom, preview string) int {
+	if m.height <= 0 {
+		return len(m.sessions)*3 + 8
+	}
+	previewRows := 0
+	if preview != "" {
+		previewRows = 1 + lipgloss.Height(preview)
+	}
+	return max(1, m.height-lipgloss.Height(header)-2-previewRows-lipgloss.Height(bottom)-1)
 }
 
 // centeredModal returns the modal that floats over the dashboard — the harness
@@ -282,18 +299,31 @@ func (m model) inputBlock() string {
 // renderPreview shows a peek of the selected session's screen once space has
 // opened the preview and a snapshot has been fetched.
 func (m model) renderPreview() string {
-	if !m.previewOn || m.onComposer || m.previewText == "" {
+	if !m.previewOn || m.onComposer {
 		return ""
 	}
-	// previewText is only ever stored for the selected session (see the previewMsg
-	// handler), so the selected id is the preview's id.
-	id := m.selectedID()
-	label := mutedStyle.Render("Preview  ·  " + id[:min(8, len(id))])
-	body := lipgloss.NewStyle().Foreground(colMuted).Render(m.previewText)
+	s := m.current()
+	if s == nil {
+		return ""
+	}
+	bodyText := m.previewText
+	if bodyText == "" {
+		bodyText = terminalDetailText(s)
+	}
+	if bodyText == "" {
+		return ""
+	}
+	id := s.ID
+	title := m.previewLabel
+	if title == "" {
+		title = "Preview"
+	}
+	label := mutedStyle.Render(title + "  ·  " + id[:min(8, len(id))])
+	body := lipgloss.NewStyle().Foreground(colMuted).Render(bodyText)
 	return label + "\n" + hRules(colMuted, m.width).Render(body)
 }
 
-// pill is the xanax logo: a small rounded capsule ("pink pill") whose three
+// pill is the rvr logo: a small rounded capsule ("pink pill") whose three
 // rows sit to the left of the three-line title/path/counts block, mirroring the
 // masthead layout. Colored with the accent (pink/magenta by default).
 const pill = "▟█████▙\n" +
@@ -303,7 +333,7 @@ const pill = "▟█████▙\n" +
 func (m model) header() string {
 	logo := lipgloss.NewStyle().Foreground(colAccent).Render(pill)
 
-	title := titleStyle.Render("xanax")
+	title := titleStyle.Render("rvr")
 	if m.deps.Version != "" {
 		title += mutedStyle.Render(" v" + m.deps.Version)
 	}
@@ -331,7 +361,7 @@ func (m model) header() string {
 // non-empty, so the header always reconciles with the list below without
 // cluttering the common case.
 func (m model) counts() string {
-	var c [6]int // indexed by groupRank: waiting, running, completed, cancelled, failed, other
+	var c [7]int // indexed by groupRank: waiting, idle, running, completed, cancelled, failed, other
 	for _, s := range m.sessions {
 		r := groupRank(s.Status)
 		if r >= len(c) {
@@ -344,43 +374,206 @@ func (m model) counts() string {
 			mutedStyle.Render(" "+label)
 	}
 	dot := mutedStyle.Render("  ·  ")
-	out := seg(c[0], colWaiting, "awaiting input") + dot +
-		seg(c[1], colRunning, "working") + dot +
-		seg(c[2], colCompleted, "completed")
-	if c[3] > 0 {
-		out += dot + seg(c[3], colCancelled, "cancelled")
+	out := seg(c[0], colWaiting, "awaiting input")
+	if c[1] > 0 {
+		out += dot + seg(c[1], colMuted, "idle")
 	}
+	out += dot + seg(c[2], colRunning, "working") + dot +
+		seg(c[3], colCompleted, "completed")
 	if c[4] > 0 {
-		out += dot + seg(c[4], colFailed, "failed")
+		out += dot + seg(c[4], colCancelled, "cancelled")
 	}
 	if c[5] > 0 {
-		out += dot + seg(c[5], colMuted, "other")
+		out += dot + seg(c[5], colFailed, "failed")
+	}
+	if c[6] > 0 {
+		out += dot + seg(c[6], colMuted, "other")
 	}
 	return out
 }
 
-func (m model) renderList() string {
+type listBlock struct {
+	lines        []string
+	sessionIndex int
+}
+
+func (m model) renderList(maxRows int) string {
 	if len(m.sessions) == 0 {
 		return mutedStyle.Render("No sessions yet — type a prompt below and press enter.")
 	}
+	if maxRows <= 0 {
+		return listOverflowLine(len(m.sessions), "hidden")
+	}
 
-	var b strings.Builder
+	blocks := m.listBlocks()
+	if blocksHeight(blocks) <= maxRows {
+		return joinBlocks(blocks)
+	}
+
+	anchor := -1
+	if !m.onComposer {
+		anchor = blockForSession(blocks, m.cursor)
+	}
+	start, end := chooseListWindow(blocks, anchor, maxRows)
+	topHidden := hiddenSessions(blocks[:start])
+	bottomHidden := hiddenSessions(blocks[end:])
+
+	contentRows := maxRows
+	if topHidden > 0 {
+		contentRows--
+	}
+	if bottomHidden > 0 {
+		contentRows--
+	}
+	if contentRows <= 0 {
+		return listOverflowLine(len(m.sessions), "hidden")
+	}
+
+	start, end = chooseListWindow(blocks, anchor, contentRows)
+	topHidden = hiddenSessions(blocks[:start])
+	bottomHidden = hiddenSessions(blocks[end:])
+
+	var lines []string
+	if topHidden > 0 {
+		lines = append(lines, listOverflowLine(topHidden, "above"))
+	}
+	for _, b := range blocks[start:end] {
+		lines = append(lines, b.lines...)
+	}
+	if bottomHidden > 0 {
+		lines = append(lines, listOverflowLine(bottomHidden, "below"))
+	}
+	if len(lines) > maxRows {
+		lines = lines[:maxRows]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) listBlocks() []listBlock {
+	var blocks []listBlock
 	lastRank := -1
 	for i, s := range m.sessions {
 		if r := groupRank(s.Status); r != lastRank {
 			if lastRank != -1 {
-				b.WriteString("\n")
+				blocks = append(blocks, listBlock{lines: []string{""}, sessionIndex: -1})
 			}
 			hdr := groupStyle.Foreground(statusColor(s.Status)).Render(
 				fmt.Sprintf("▍ %s", groupLabel(r)))
-			b.WriteString(hdr)
-			b.WriteByte('\n')
+			blocks = append(blocks, listBlock{lines: []string{hdr}, sessionIndex: -1})
 			lastRank = r
 		}
-		b.WriteString(m.renderRow(s, !m.onComposer && i == m.cursor))
-		b.WriteString("\n")
+		blocks = append(blocks, listBlock{
+			lines:        strings.Split(m.renderRow(s, !m.onComposer && i == m.cursor), "\n"),
+			sessionIndex: i,
+		})
 	}
-	return b.String()
+	return blocks
+}
+
+func chooseListWindow(blocks []listBlock, anchor, maxRows int) (int, int) {
+	if len(blocks) == 0 || maxRows <= 0 {
+		return 0, 0
+	}
+	if anchor < 0 {
+		rows, end := 0, 0
+		for end < len(blocks) && rows+len(blocks[end].lines) <= maxRows {
+			rows += len(blocks[end].lines)
+			end++
+		}
+		return 0, max(1, end)
+	}
+
+	start, end := anchor, anchor+1
+	rows := len(blocks[anchor].lines)
+	preferAbove := true
+	for rows < maxRows && (start > 0 || end < len(blocks)) {
+		added := false
+		if preferAbove {
+			added = extendListWindowAbove(blocks, &start, &rows, maxRows)
+			if !added {
+				added = extendListWindowBelow(blocks, &end, &rows, maxRows)
+			}
+		} else {
+			added = extendListWindowBelow(blocks, &end, &rows, maxRows)
+			if !added {
+				added = extendListWindowAbove(blocks, &start, &rows, maxRows)
+			}
+		}
+		if !added {
+			break
+		}
+		preferAbove = !preferAbove
+	}
+	return start, end
+}
+
+func extendListWindowAbove(blocks []listBlock, start, rows *int, maxRows int) bool {
+	if *start == 0 {
+		return false
+	}
+	h := len(blocks[*start-1].lines)
+	if *rows+h > maxRows {
+		return false
+	}
+	*start = *start - 1
+	*rows += h
+	return true
+}
+
+func extendListWindowBelow(blocks []listBlock, end, rows *int, maxRows int) bool {
+	if *end >= len(blocks) {
+		return false
+	}
+	h := len(blocks[*end].lines)
+	if *rows+h > maxRows {
+		return false
+	}
+	*end = *end + 1
+	*rows += h
+	return true
+}
+
+func blockForSession(blocks []listBlock, sessionIndex int) int {
+	for i, b := range blocks {
+		if b.sessionIndex == sessionIndex {
+			return i
+		}
+	}
+	return -1
+}
+
+func blocksHeight(blocks []listBlock) int {
+	rows := 0
+	for _, b := range blocks {
+		rows += len(b.lines)
+	}
+	return rows
+}
+
+func hiddenSessions(blocks []listBlock) int {
+	n := 0
+	for _, b := range blocks {
+		if b.sessionIndex >= 0 {
+			n++
+		}
+	}
+	return n
+}
+
+func joinBlocks(blocks []listBlock) string {
+	var lines []string
+	for _, b := range blocks {
+		lines = append(lines, b.lines...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func listOverflowLine(n int, where string) string {
+	label := "sessions"
+	if n == 1 {
+		label = "session"
+	}
+	return mutedStyle.Render(fmt.Sprintf("… %d more %s %s", n, label, where))
 }
 
 func (m model) renderRow(s *session.Session, selected bool) string {
@@ -389,12 +582,12 @@ func (m model) renderRow(s *session.Session, selected bool) string {
 	if selected {
 		title = selectStyle.Render(title)
 	}
-	meta := mutedStyle.Render(fmt.Sprintf("%s · %s · %s",
-		s.Harness, repoName(s.RepoPath), humanAge(s.CreatedAt)))
+	meta := mutedStyle.Render(fmt.Sprintf("%s · %s · %s · %s",
+		shortID(s.ID), s.Harness, repoName(s.RepoPath), humanAge(s.CreatedAt)))
 
 	content := fmt.Sprintf("%s %s   %s", glyph, title, meta)
-	if s.Status == session.StatusWaiting && s.StatusDetail != "" {
-		content += mutedStyle.Render("  — " + truncate(s.StatusDetail, 40))
+	if detail := rowDetailText(s); detail != "" {
+		content += mutedStyle.Render("  — " + truncate(detail, 48))
 	}
 
 	// Live git context (branch · #PR), right-aligned against the row edge.
@@ -406,6 +599,24 @@ func (m model) renderRow(s *session.Session, selected bool) string {
 	}
 	// The selected session gets full-width top+bottom rules in the accent color.
 	return hRules(colAccent, m.width).Render(content)
+}
+
+func rowDetailText(s *session.Session) string {
+	var parts []string
+	if detail := strings.TrimSpace(s.StatusDetail); detail != "" {
+		parts = append(parts, detail)
+	}
+	if (s.Status == session.StatusFailed || s.Status == session.StatusCancelled) && s.ExitCode != nil {
+		parts = append(parts, fmt.Sprintf("exit %d", *s.ExitCode))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func terminalDetailText(s *session.Session) string {
+	if s.Status != session.StatusFailed && s.Status != session.StatusCancelled {
+		return ""
+	}
+	return rowDetailText(s)
 }
 
 // gitSuffix renders " branch · #pr" for a repo, or "" when unknown.
@@ -504,7 +715,10 @@ func (m model) footer() string {
 	k := m.keys()
 	// A pending quit confirmation takes over the footer with a caution prompt.
 	if m.confirmQuit {
-		return warnStyle.Render("Press " + keyHint(k.Quit) + " again to exit xanax")
+		return warnStyle.Render("Press " + keyHint(k.Quit) + " again to exit rvr")
+	}
+	if m.confirmRemoveID != "" {
+		return warnStyle.Render("Press " + keyHint(k.Remove) + " again to kill and remove " + shortID(m.confirmRemoveID))
 	}
 	// Hints are built from the live bindings (keyHint), so remapping a key in the
 	// config updates the footer to match rather than advertising a stale default.
@@ -535,13 +749,17 @@ func (m model) footer() string {
 			hint = fmt.Sprintf("type to search · %s move · %s rebind · %s close",
 				updown, keyHint(k.Confirm), keyHint(k.Cancel))
 		}
+	case m.onComposer && m.composer.Value() != "":
+		hint = fmt.Sprintf("%s launch · %s launch+attach · %s harness (+ add) · ↑/↓ cursor · %s clear · %s quit",
+			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),
+			keyHint(k.Cancel), keyHint(k.Quit))
 	case m.onComposer:
 		hint = fmt.Sprintf("%s launch · %s launch+attach · %s harness (+ add) · %s sessions · %s quit",
 			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),
 			keyHint(k.Up), keyHint(k.Quit))
 	default:
-		hint = fmt.Sprintf("%s select · %s open · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
-			updown, keyHint(k.Open), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
+		hint = fmt.Sprintf("%s select · %s open · ← back · %s logs · %s preview · %s rename · %s resume · %s remove · %s settings · %s filter · %s quit",
+			updown, keyHint(k.Open), keyHint(k.Logs), keyHint(k.Preview), keyHint(k.Rename), keyHint(k.Resume),
 			keyHint(k.Remove), keyHint(k.Settings), keyHint(k.Filter), keyHint(k.Quit))
 	}
 	out := footerStyle.Render(hint)

@@ -5,14 +5,14 @@ import (
 	"regexp"
 	"time"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // inferer approximates agent state for a harness that exposes no native state
 // channel (the generic adapter). It has two independent, opt-in signals:
 //   - a regexp matched against output → "waiting" (e.g. a "(y/n)" prompt)
-//   - an idle timeout: no output for N seconds → "waiting"
+//   - an idle timeout: no output for N seconds → "idle"
 //
 // Either resets to "running" when output resumes. It is best-effort and
 // approximate; a native adapter is authoritative.
@@ -76,7 +76,7 @@ func (s *Supervisor) inferObserve(chunk []byte) {
 	}
 }
 
-// idleLoop marks the session waiting once output has been quiet past the idle
+// idleLoop marks the session idle once output has been quiet past the idle
 // timeout, on a one-second ticker until the session exits. The decision and its
 // application are made together under statusMu, so an output chunk arriving in
 // the same instant is never overwritten.
@@ -89,15 +89,12 @@ func (s *Supervisor) idleLoop() {
 			return
 		case <-t.C:
 			s.statusMu.Lock()
-			var prev session.Status
-			var changed bool
-			if s.curStatus != session.StatusWaiting && s.infer.idleElapsed(time.Now()) {
-				prev, changed = s.applyStatusLocked(session.StatusWaiting, "idle")
+			if s.curStatus != session.StatusIdle && s.infer.idleElapsed(time.Now()) {
+				s.applyStatusLocked(session.StatusIdle, "")
 			}
 			s.statusMu.Unlock()
-			if changed {
-				s.raiseNotification(prev, session.StatusWaiting, "idle")
-			}
+			// Silence alone is not actionable, so generic idle inference never
+			// raises a notification. Native StateIdle events still may.
 		}
 	}
 }

@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	"xanax/internal/supervisor"
+	"github.com/LeJamon/rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/supervisor"
 )
 
 func newSuperviseCmd() *cobra.Command {
@@ -34,7 +36,12 @@ func newSuperviseCmd() *cobra.Command {
 			}
 			harness, ok := e.cfg.Harnesses[sess.Harness]
 			if !ok {
-				return err
+				detail := missingHarnessDetail(sess.Harness)
+				st.RecordEvent(sess.ID, "error", map[string]any{"message": detail})
+				if err := st.FinishWithDetail(sess.ID, session.StatusFailed, 1, detail); err != nil {
+					return err
+				}
+				return errors.New(detail)
 			}
 
 			// stderr is redirected to the supervisor log file by the parent.
@@ -49,7 +56,7 @@ func newSuperviseCmd() *cobra.Command {
 				Resume:  resume,
 				Notify:  e.cfg.Notifications,
 			})
-			if err != nil {
+			if err != nil && !errors.Is(err, supervisor.ErrAlreadySupervised) {
 				logger.Error("supervisor exited with error", "err", err)
 			}
 			os.Exit(code)

@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"xanax/internal/config"
+	"github.com/LeJamon/rvr/internal/config"
 )
 
 // openSettings opens the keybindings editor over the current view. It is reached
@@ -60,10 +60,10 @@ func (m model) updateSettingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	k := m.keys()
 	switch {
-	case keyMatches(k.Up, msg):
+	case keyMatches(k.Up, msg) && !textInputKey(msg):
 		m.moveSettings(-1)
 		return m, nil
-	case keyMatches(k.Down, msg):
+	case keyMatches(k.Down, msg) && !textInputKey(msg):
 		m.moveSettings(1)
 		return m, nil
 	case keyMatches(k.Confirm, msg):
@@ -129,6 +129,12 @@ func (m model) commitCapture() (tea.Model, tea.Cmd) {
 		m.status = "rebind failed: no config path"
 		return m, nil
 	}
+	unlock, err := acquireConfigLock(m.deps.ConfigPath)
+	if err != nil {
+		m.status = "rebind failed: " + err.Error()
+		return m, nil
+	}
+	defer unlock()
 	orig, origErr := os.ReadFile(m.deps.ConfigPath)
 	if err := setKeyBindingInConfig(m.deps.ConfigPath, name, pending); err != nil {
 		m.status = "rebind failed: " + err.Error()
@@ -201,7 +207,7 @@ func setKeyBindingInConfig(path, action string, keys []string) error {
 		b.WriteString("[keys]\n")
 		b.WriteString(line)
 		b.WriteString("\n")
-		return os.WriteFile(path, []byte(b.String()), 0o600)
+		return writeFileAtomic(path, []byte(b.String()), 0o600)
 	}
 
 	// The table runs to the next table header (or EOF). Replace the action's
@@ -230,14 +236,14 @@ func setKeyBindingInConfig(path, action string, keys []string) error {
 		out = append(out, lines[:i]...)
 		out = append(out, line)
 		out = append(out, lines[last+1:]...)
-		return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
+		return writeFileAtomic(path, []byte(strings.Join(out, "\n")), 0o600)
 	}
 	// Not present — insert right after the [keys] header.
 	out := make([]string, 0, len(lines)+1)
 	out = append(out, lines[:start+1]...)
 	out = append(out, line)
 	out = append(out, lines[start+1:]...)
-	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o600)
+	return writeFileAtomic(path, []byte(strings.Join(out, "\n")), 0o600)
 }
 
 // tomlTableName returns the bare name of a TOML table header line ("[keys]" ->

@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -12,14 +13,16 @@ import (
 	"strconv"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
-	"xanax/internal/session"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 var (
 	ErrNotFound  = errors.New("session not found")
 	ErrAmbiguous = errors.New("session ID prefix is ambiguous")
+	ErrConflict  = errors.New("session changed concurrently")
 )
 
 // migrations are forward-only; settings.schema_version records how many have
@@ -58,6 +61,8 @@ CREATE TABLE repositories (
   name         TEXT NOT NULL,
   last_used_at TEXT NOT NULL
 );
+`, `
+ALTER TABLE sessions ADD COLUMN lifecycle INTEGER NOT NULL DEFAULT 1;
 `}
 
 // Event is one row of the append-only event log.
@@ -79,28 +84,61 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 	s := &Store{db: db}
-	if err := s.migrate(); err != nil {
+	if err := s.migrateWithRetry(5 * time.Second); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
 	return s, nil
 }
 
+func (s *Store) migrateWithRetry(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	delay := 10 * time.Millisecond
+	for {
+		err := s.migrate()
+		if err == nil || !isSQLiteBusy(err) || time.Now().Add(delay).After(deadline) {
+			return err
+		}
+		time.Sleep(delay)
+		delay = min(delay*2, 200*time.Millisecond)
+	}
+}
+
+func isSQLiteBusy(err error) bool {
+	var sqliteErr *sqlite.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqlite3.SQLITE_BUSY
+}
+
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate() error {
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		}
+	}()
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
 		return err
 	}
 	version := 0
 	var raw string
-	err := s.db.QueryRow(`SELECT value FROM settings WHERE key = 'schema_version'`).Scan(&raw)
+	err = conn.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'schema_version'`).Scan(&raw)
 	switch {
 	case err == nil:
 		version, err = strconv.Atoi(raw)
@@ -112,29 +150,24 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if version > len(migrations) {
-		return fmt.Errorf("database schema version %d is newer than this xanax build (max %d)", version, len(migrations))
+		return fmt.Errorf("database schema version %d is newer than this rvr build (max %d)", version, len(migrations))
 	}
 	for i := version; i < len(migrations); i++ {
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(migrations[i]); err != nil {
-			tx.Rollback()
+		if _, err := conn.ExecContext(ctx, migrations[i]); err != nil {
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}
-		if _, err := tx.Exec(
+		if _, err := conn.ExecContext(ctx,
 			`INSERT INTO settings (key, value) VALUES ('schema_version', ?)
 			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 			strconv.Itoa(i+1),
 		); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
 			return err
 		}
 	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 
@@ -142,17 +175,18 @@ func (s *Store) migrate() error {
 func (s *Store) CreateSession(sess *session.Session) error {
 	now := time.Now().UTC()
 	sess.CreatedAt, sess.UpdatedAt = now, now
+	sess.Lifecycle = 1
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (
 			id, title, repo_path, branch, harness, harness_session_ref,
 			initial_prompt, status, status_detail, pid, socket_path,
-			exit_code, created_at, updated_at, ended_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			exit_code, created_at, updated_at, ended_at, lifecycle
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID, sess.Title, sess.RepoPath, nullStr(sess.Branch), sess.Harness,
 		nullStr(sess.HarnessSessionRef), nullStr(sess.InitialPrompt),
 		string(sess.Status), nullStr(sess.StatusDetail), nullInt(sess.PID),
 		nullStr(sess.SocketPath), nullIntPtr(sess.ExitCode),
-		fmtTime(now), fmtTime(now), nullTimePtr(sess.EndedAt),
+		fmtTime(now), fmtTime(now), nullTimePtr(sess.EndedAt), sess.Lifecycle,
 	)
 	return err
 }
@@ -259,7 +293,51 @@ func (s *Store) SetRuntime(id string, pid int, socketPath string, status session
 	)
 }
 
-// SetTitle renames a session. The title is xanax's UI label only; it does not
+// BeginResume starts a new lifecycle for an existing session before its
+// supervisor process is spawned. Clearing the previous terminal outcome keeps
+// waiters and cleanup commands from mistaking an in-flight resume for the old
+// completed/failed run.
+func (s *Store) BeginResume(sess *session.Session) error {
+	now := time.Now().UTC()
+	if !now.After(sess.UpdatedAt) {
+		now = sess.UpdatedAt.Add(time.Nanosecond)
+	}
+	res, err := s.db.Exec(
+		`UPDATE sessions
+		 SET status = ?, status_detail = NULL, pid = NULL, socket_path = NULL,
+		     exit_code = NULL, ended_at = NULL, updated_at = ?,
+		     lifecycle = lifecycle + 1
+		 WHERE id = ? AND lifecycle = ? AND status = ?`,
+		string(session.StatusStarting), fmtTime(now), sess.ID, sess.Lifecycle, string(sess.Status),
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		sess.Status = session.StatusStarting
+		sess.StatusDetail = ""
+		sess.PID = 0
+		sess.SocketPath = ""
+		sess.ExitCode = nil
+		sess.EndedAt = nil
+		sess.UpdatedAt = now
+		sess.Lifecycle++
+		return nil
+	}
+	var exists int
+	if err := s.db.QueryRow(`SELECT 1 FROM sessions WHERE id = ?`, sess.ID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %q", ErrNotFound, sess.ID)
+	} else if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %q", ErrConflict, sess.ID)
+}
+
+// SetTitle renames a session. The title is rvr's UI label only; it does not
 // touch the harness's own session.
 func (s *Store) SetTitle(id, title string) error {
 	return s.exec1(id,
@@ -278,11 +356,41 @@ func (s *Store) SetSessionRef(id, ref string) error {
 
 // Finish records a terminal state, exit code, and end timestamp.
 func (s *Store) Finish(id string, status session.Status, exitCode int) error {
+	return s.FinishWithDetail(id, status, exitCode, "")
+}
+
+// FinishWithDetail records a terminal state, exit code, detail, and end
+// timestamp.
+func (s *Store) FinishWithDetail(id string, status session.Status, exitCode int, detail string) error {
 	now := fmtTime(time.Now().UTC())
 	return s.exec1(id,
-		`UPDATE sessions SET status = ?, exit_code = ?, updated_at = ?, ended_at = ? WHERE id = ?`,
-		string(status), exitCode, now, now, id,
+		`UPDATE sessions SET status = ?, status_detail = ?, exit_code = ?, updated_at = ?, ended_at = ? WHERE id = ?`,
+		string(status), nullStr(detail), exitCode, now, now, id,
 	)
+}
+
+// FinishIfCurrent records a terminal outcome only when the row still matches
+// the caller's snapshot. It prevents stale reconciliation or launch-failure
+// handling from overwriting a concurrently started lifecycle.
+func (s *Store) FinishIfCurrent(
+	sess *session.Session,
+	status session.Status,
+	exitCode int,
+	detail string,
+) (bool, error) {
+	now := fmtTime(time.Now().UTC())
+	res, err := s.db.Exec(
+		`UPDATE sessions
+		 SET status = ?, status_detail = ?, exit_code = ?, updated_at = ?, ended_at = ?
+		 WHERE id = ? AND status = ? AND lifecycle = ?`,
+		string(status), nullStr(detail), exitCode, now, now,
+		sess.ID, string(sess.Status), sess.Lifecycle,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // exec1 runs a single-row UPDATE and maps a zero-row result to ErrNotFound.
@@ -302,8 +410,8 @@ func (s *Store) exec1(id, query string, args ...any) error {
 	return nil
 }
 
-// DeleteSession removes a session and its event log. Used by the dashboard's
-// "kill" action to clear a session from the list.
+// DeleteSession removes a session and its event log. Used by the dashboard and
+// CLI remove actions to clear a session from the list.
 func (s *Store) DeleteSession(id string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -313,11 +421,69 @@ func (s *Store) DeleteSession(id string) error {
 		tx.Rollback()
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM sessions WHERE id = ?`, id); err != nil {
+	res, err := tx.Exec(`DELETE FROM sessions WHERE id = ?`, id)
+	if err != nil {
 		tx.Rollback()
 		return err
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	if n == 0 {
+		tx.Rollback()
+		return fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
 	return tx.Commit()
+}
+
+// DeleteTerminalSession removes a session only if it is still terminal at the
+// moment the write transaction begins. A concurrent BeginResume either commits
+// first (and this returns false without deleting events) or loses to deletion
+// and observes ErrNotFound, so prune and non-force rm cannot erase a new run.
+func (s *Store) DeleteTerminalSession(id string) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	terminalArgs := []any{
+		id, id,
+		string(session.StatusCompleted), string(session.StatusFailed), string(session.StatusCancelled),
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM events
+		 WHERE session_id = ?
+		   AND EXISTS (
+		       SELECT 1 FROM sessions
+		       WHERE id = ? AND status IN (?, ?, ?)
+		   )`,
+		terminalArgs...,
+	); err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	res, err := tx.Exec(
+		`DELETE FROM sessions WHERE id = ? AND status IN (?, ?, ?)`,
+		id, string(session.StatusCompleted), string(session.StatusFailed), string(session.StatusCancelled),
+	)
+	if err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	if n == 0 {
+		_ = tx.Rollback()
+		return false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RecordEvent appends to the immutable event log. payload is JSON-marshaled;
@@ -379,7 +545,7 @@ func (s *Store) TouchRepository(path, name string) error {
 const selectSessions = `
 	SELECT id, title, repo_path, branch, harness, harness_session_ref,
 	       initial_prompt, status, status_detail, pid, socket_path,
-	       exit_code, created_at, updated_at, ended_at
+	       exit_code, created_at, updated_at, ended_at, lifecycle
 	FROM sessions`
 
 func scanSession(rows *sql.Rows) (*session.Session, error) {
@@ -393,7 +559,7 @@ func scanSession(rows *sql.Rows) (*session.Session, error) {
 	if err := rows.Scan(
 		&sess.ID, &sess.Title, &sess.RepoPath, &branch, &sess.Harness, &ref,
 		&prompt, &status, &detail, &pid, &socket, &exitCode,
-		&createdAt, &updated, &endedAt,
+		&createdAt, &updated, &endedAt, &sess.Lifecycle,
 	); err != nil {
 		return nil, err
 	}

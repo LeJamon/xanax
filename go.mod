@@ -1,6 +1,6 @@
-module xanax
+module github.com/LeJamon/rvr
 
-go 1.26.1
+go 1.26.5
 
 require (
 	github.com/BurntSushi/toml v1.6.0

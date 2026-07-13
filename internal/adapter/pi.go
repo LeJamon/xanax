@@ -12,12 +12,12 @@ import (
 	"path/filepath"
 	"sync"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 // piAdapter launches the pi coding agent's TUI and observes its state through
-// a tiny xanax hook extension (SPEC.md §5). The hook is materialized from the
+// a tiny rvr hook extension (SPEC.md §5). The hook is materialized from the
 // embedded asset and loaded with `pi -e <hook>`; it connects back to a unix
 // socket and reports lifecycle events as JSON lines.
 type piAdapter struct {
@@ -84,7 +84,7 @@ func (a *piAdapter) Launch(resume bool) (LaunchSpec, error) {
 	if env == nil {
 		env = os.Environ()
 	}
-	env = append(env, "PI_SKIP_VERSION_CHECK=1", "XANAX_HOOK_SOCKET="+a.socketPath)
+	env = append(env, "PI_SKIP_VERSION_CHECK=1", "RVR_HOOK_SOCKET="+a.socketPath)
 
 	return LaunchSpec{Path: a.h.Command, Args: args, Env: env, Dir: a.sess.RepoPath}, nil
 }

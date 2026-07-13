@@ -2,16 +2,18 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"xanax/internal/attach"
-	"xanax/internal/session"
+	"github.com/LeJamon/rvr/internal/attach"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 func newNewCmd() *cobra.Command {
@@ -22,11 +24,22 @@ func newNewCmd() *cobra.Command {
 		noAttach bool
 	)
 	cmd := &cobra.Command{
-		Use:   `new [flags] "prompt"`,
+		Use:   `new [flags] [prompt ...]`,
 		Short: "Launch a new agent session",
-		Args:  cobra.ExactArgs(1),
+		Long: `Launch a new agent session.
+
+With no prompt, rvr starts a fresh interactive harness. Multiple prompt
+arguments are joined with spaces. Use "-" as the only prompt argument to read
+the prompt from stdin.
+
+When rvr attaches to the new session, press the configured detach key (ctrl+q
+by default). The session keeps running after you detach.`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			prompt := args[0]
+			prompt, err := promptFromNewArgs(cmd, args)
+			if err != nil {
+				return err
+			}
 			e, err := loadEnv()
 			if err != nil {
 				return err
@@ -36,8 +49,12 @@ func newNewCmd() *cobra.Command {
 			if harnessName == "" {
 				harnessName = e.cfg.DefaultHarness
 			}
-			if _, ok := e.cfg.Harnesses[harnessName]; !ok {
-				return fmt.Errorf("unknown harness %q (see `xanax config`)", harnessName)
+			h, ok := e.cfg.Harnesses[harnessName]
+			if !ok {
+				return fmt.Errorf("unknown harness %q (see `rvr config`)", harnessName)
+			}
+			if err := e.checkHarnessCommand(harnessName, h); err != nil {
+				return err
 			}
 
 			repoAbs, err := filepath.Abs(repo)
@@ -73,7 +90,7 @@ func newNewCmd() *cobra.Command {
 			st.TouchRepository(repoAbs, filepath.Base(repoAbs))
 
 			if _, err := e.spawnSupervisor(sess.ID, false); err != nil {
-				st.Finish(sess.ID, session.StatusFailed, 1)
+				st.FinishWithDetail(sess.ID, session.StatusFailed, 1, err.Error())
 				return err
 			}
 
@@ -83,12 +100,18 @@ func newNewCmd() *cobra.Command {
 
 			wantAttach := !noAttach && term.IsTerminal(int(os.Stdout.Fd()))
 			if !wantAttach {
-				fmt.Fprintf(out, "Attach with: xanax attach %s\n", shortID(sess.ID))
+				fmt.Fprintf(out, "Attach with: rvr attach %s\n", shortID(sess.ID))
 				return nil
 			}
-			if !e.waitForSocket(sess.ID, 10*time.Second) {
-				fmt.Fprintf(out, "Supervisor is starting; attach with: xanax attach %s\n", shortID(sess.ID))
-				return nil
+			wait := 10 * time.Second
+			if alive, terminal, waitErr := e.waitForSocketOrTerminal(st, sess.ID, wait); !alive {
+				if waitErr != nil {
+					return waitErr
+				}
+				if terminal != nil {
+					return e.sessionUnavailableError(st, terminal)
+				}
+				return e.supervisorStartingError(sess.ID, wait)
 			}
 			return runAttach(e, sess.ID)
 		},
@@ -100,12 +123,37 @@ func newNewCmd() *cobra.Command {
 	return cmd
 }
 
+func promptFromNewArgs(cmd *cobra.Command, args []string) (string, error) {
+	switch {
+	case len(args) == 0:
+		return "", nil
+	case len(args) == 1 && args[0] == "-":
+		data, err := io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return "", fmt.Errorf("read prompt from stdin: %w", err)
+		}
+		return trimFinalLineBreak(string(data)), nil
+	default:
+		return strings.Join(args, " "), nil
+	}
+}
+
+func trimFinalLineBreak(s string) string {
+	s = strings.TrimSuffix(s, "\n")
+	return strings.TrimSuffix(s, "\r")
+}
+
 // runAttach connects to a live session and proxies the terminal.
 func runAttach(e *env, id string) error {
+	exitKey, err := attach.ParseExitKey(e.cfg.InteractExitKey)
+	if err != nil {
+		return err
+	}
 	res, err := attach.Run(attach.Options{
 		SocketPath: e.socketPath(id),
-		ExitKey:    attach.ParseExitKey(e.cfg.InteractExitKey),
+		ExitKey:    exitKey,
 	})
+	attach.ReportResult(res)
 	if err != nil {
 		return err
 	}

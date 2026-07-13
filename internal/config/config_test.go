@@ -4,11 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 func writeConfig(t *testing.T, content string) string {
@@ -31,8 +32,8 @@ func TestLoadDefaultsWhenFileMissing(t *testing.T) {
 	if !cfg.AutoResume {
 		t.Error("AutoResume = false, want true by default")
 	}
-	if cfg.InteractExitKey != `ctrl+\` {
-		t.Errorf("InteractExitKey = %q, want ctrl+\\", cfg.InteractExitKey)
+	if cfg.InteractExitKey != "ctrl+q" {
+		t.Errorf("InteractExitKey = %q, want ctrl+q", cfg.InteractExitKey)
 	}
 	if got := cfg.Harnesses["opencode"].Adapter; got != config.AdapterOpencode {
 		t.Errorf("opencode adapter = %q, want %q", got, config.AdapterOpencode)
@@ -53,6 +54,9 @@ func TestLoadDefaultsWhenFileMissing(t *testing.T) {
 	if codex.IdleTimeout != 120 {
 		t.Errorf("codex default idle_timeout = %d, want 120", codex.IdleTimeout)
 	}
+	if !codex.FullScreen {
+		t.Error("codex default full_screen = false, want true")
+	}
 }
 
 func TestLoadMergesFileOverDefaults(t *testing.T) {
@@ -67,6 +71,9 @@ command = "/opt/opencode/bin/opencode"
 command = "goose"
 args = ["session"]
 resume_args = ["session", "--resume"]
+
+[harness.work-codex]
+command = "/opt/codex/bin/codex"
 `)
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -78,7 +85,7 @@ resume_args = ["session", "--resume"]
 	if cfg.AutoResume {
 		t.Error("AutoResume = true, want false from file")
 	}
-	if cfg.InteractExitKey != `ctrl+\` {
+	if cfg.InteractExitKey != "ctrl+q" {
 		t.Errorf("InteractExitKey = %q, want default preserved", cfg.InteractExitKey)
 	}
 
@@ -99,6 +106,11 @@ resume_args = ["session", "--resume"]
 	}
 	if len(goose.ResumeArgs) != 2 {
 		t.Errorf("goose resume_args = %v", goose.ResumeArgs)
+	}
+
+	workCodex := cfg.Harnesses["work-codex"]
+	if workCodex.Adapter != config.AdapterGeneric || !workCodex.FullScreen {
+		t.Errorf("codex command alias = %+v, want generic full_screen harness", workCodex)
 	}
 }
 
@@ -131,13 +143,21 @@ args = ["-a", "never", "-s", "workspace-write"]
 	if codex.IdleTimeout != 120 {
 		t.Errorf("partial codex override dropped idle_timeout: %d", codex.IdleTimeout)
 	}
+	if !codex.FullScreen {
+		t.Error("partial codex override dropped full_screen")
+	}
 }
 
 func TestLoadCodexDefaultsCanBeExplicitlyDisabled(t *testing.T) {
 	path := writeConfig(t, `
 [harness.codex]
 prompt_positional = false
+full_screen = false
 idle_timeout = 0
+
+[harness.work-codex]
+command = "codex"
+full_screen = false
 `)
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -150,11 +170,17 @@ idle_timeout = 0
 	if codex.IdleTimeout != 0 {
 		t.Errorf("codex idle_timeout = %d, want explicit zero override", codex.IdleTimeout)
 	}
+	if codex.FullScreen {
+		t.Error("codex full_screen = true, want explicit false override")
+	}
 	if codex.Adapter != config.AdapterGeneric || codex.Command != "codex" {
 		t.Errorf("codex default identity = %+v, want generic codex", codex)
 	}
 	if !slices.Equal(codex.ResumeArgs, []string{"resume", "--last"}) {
 		t.Errorf("codex resume_args = %v, want default resume args preserved", codex.ResumeArgs)
+	}
+	if cfg.Harnesses["work-codex"].FullScreen {
+		t.Error("codex command alias full_screen = true, want explicit false override")
 	}
 }
 
@@ -165,6 +191,7 @@ func TestLoadCodexGenericExample(t *testing.T) {
 [harness.codex]
 adapter           = "generic"
 command           = "codex"
+full_screen       = true
 prompt_positional = true
 resume_args       = ["resume", "--last"]
 idle_timeout      = 120
@@ -188,6 +215,9 @@ idle_timeout      = 120
 	}
 	if codex.IdleTimeout != 120 {
 		t.Errorf("codex idle_timeout = %d, want 120", codex.IdleTimeout)
+	}
+	if !codex.FullScreen {
+		t.Error("codex full_screen = false, want true")
 	}
 }
 
@@ -258,6 +288,45 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsValidInteractExitKey(t *testing.T) {
+	for _, spec := range []string{`ctrl+\`, "q"} {
+		t.Run(spec, func(t *testing.T) {
+			path := writeConfig(t, "interact_exit_key = "+strconv.Quote(spec)+"\n")
+			cfg, err := config.Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.InteractExitKey != spec {
+				t.Fatalf("InteractExitKey = %q, want %q", cfg.InteractExitKey, spec)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidInteractExitKey(t *testing.T) {
+	for _, tc := range []struct {
+		spec string
+		want string
+	}{
+		{"ctrl+&", "interact_exit_key"},
+		{"ctrl+space", "interact_exit_key"},
+		{"F12", "interact_exit_key"},
+		{"super+F12", "interact_exit_key"},
+		{"ctrl+m", "Enter"},
+		{"ctrl+j", "Enter"},
+		{"ctrl+i", "Tab"},
+		{"ctrl+h", "Backspace"},
+	} {
+		t.Run(tc.spec, func(t *testing.T) {
+			path := writeConfig(t, "interact_exit_key = "+strconv.Quote(tc.spec)+"\n")
+			_, err := config.Load(path)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("interact_exit_key=%q: want error containing %q, got %v", tc.spec, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsInvalidThemeColor(t *testing.T) {
 	for _, bad := range []string{"256", "300", "-1", "gren", "13.5", "0x0d",
 		"#zzzzzz", "#ff88", "#ff8800aa", "13 ", " 13"} {
@@ -305,14 +374,23 @@ func TestLoadDefaultKeysWhenFileMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !slices.Equal(cfg.Keys.Remove, config.Binding{"k", "ctrl+k"}) {
-		t.Errorf("default remove keys = %v, want [k ctrl+k]", cfg.Keys.Remove)
+	if !slices.Equal(cfg.Keys.Up, config.Binding{"up", "k"}) {
+		t.Errorf("default up keys = %v, want [up k]", cfg.Keys.Up)
+	}
+	if !slices.Equal(cfg.Keys.Down, config.Binding{"down", "j"}) {
+		t.Errorf("default down keys = %v, want [down j]", cfg.Keys.Down)
+	}
+	if !slices.Equal(cfg.Keys.Remove, config.Binding{"ctrl+x"}) {
+		t.Errorf("default remove keys = %v, want [ctrl+x]", cfg.Keys.Remove)
 	}
 	if !slices.Equal(cfg.Keys.Quit, config.Binding{"ctrl+c"}) {
 		t.Errorf("default quit keys = %v, want [ctrl+c]", cfg.Keys.Quit)
 	}
 	if !slices.Equal(cfg.Keys.Preview, config.Binding{"space"}) {
 		t.Errorf("default preview keys = %v, want [space]", cfg.Keys.Preview)
+	}
+	if !slices.Equal(cfg.Keys.Logs, config.Binding{"l"}) {
+		t.Errorf("default logs keys = %v, want [l]", cfg.Keys.Logs)
 	}
 	if !slices.Equal(cfg.Keys.Settings, config.Binding{"s"}) {
 		t.Errorf("default settings keys = %v, want [s]", cfg.Keys.Settings)
@@ -331,7 +409,7 @@ func TestKeyMapActionsCoverEveryBinding(t *testing.T) {
 		}
 		names[a.Name] = true
 	}
-	for _, want := range []string{"settings", "remove", "confirm", "cancel", "quit", "form_prev"} {
+	for _, want := range []string{"settings", "logs", "remove", "confirm", "cancel", "quit", "form_prev"} {
 		if !names[want] {
 			t.Errorf("Actions() is missing the %q action", want)
 		}
@@ -396,7 +474,7 @@ func TestLoadRejectsEmptyKeyBinding(t *testing.T) {
 	}
 }
 
-// CanResume is the shared gate for `xanax resume` and the dashboard's open
+// CanResume is the shared gate for `rvr resume` and the dashboard's open
 // action. The "generic with resume_args" case is the regression that mattered:
 // generic harnesses never capture a session ref, so a completed session has an
 // empty ref yet must still be openable via its configured resume_args.
@@ -412,11 +490,12 @@ func TestCanResume(t *testing.T) {
 		sess *session.Session
 		want bool
 	}{
-		{"captured ref always resumable", &session.Session{Harness: "opencode", HarnessSessionRef: "ses_1"}, true},
+		{"captured ref for configured harness", &session.Session{Harness: "opencode", HarnessSessionRef: "ses_1"}, true},
 		{"completed generic with resume_args, no ref", &session.Session{Harness: "codex", Status: session.StatusCompleted}, true},
 		{"generic without resume_args", &session.Session{Harness: "aider"}, false},
 		{"native without ref", &session.Session{Harness: "opencode"}, false},
 		{"unknown harness", &session.Session{Harness: "gone"}, false},
+		{"captured ref for unknown harness", &session.Session{Harness: "gone", HarnessSessionRef: "ses_1"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

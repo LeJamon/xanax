@@ -5,7 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"xanax/internal/config"
+	"github.com/LeJamon/rvr/internal/config"
 )
 
 // keys returns the resolved key bindings the dashboard dispatches through. It
@@ -34,7 +34,7 @@ func canonKey(s string) string {
 	if s == " " {
 		return "space"
 	}
-	return strings.TrimSpace(s)
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
 // keyHint renders a compact label for a binding's primary (first) key, for the
@@ -64,8 +64,8 @@ func keyLabel(k string) string {
 		return "^c"
 	case "ctrl+o":
 		return "^o"
-	case "ctrl+k":
-		return "^k"
+	case "ctrl+x":
+		return "^x"
 	case "ctrl+r":
 		return "^r"
 	default:

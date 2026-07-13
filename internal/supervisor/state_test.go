@@ -3,8 +3,8 @@ package supervisor
 import (
 	"testing"
 
-	"xanax/internal/adapter"
-	"xanax/internal/session"
+	"github.com/LeJamon/rvr/internal/adapter"
+	"github.com/LeJamon/rvr/internal/session"
 )
 
 func TestMapState(t *testing.T) {
@@ -15,7 +15,7 @@ func TestMapState(t *testing.T) {
 		message string
 	}{
 		{adapter.StateBusy, session.StatusRunning, true, ""},
-		{adapter.StateIdle, session.StatusWaiting, true, ""},
+		{adapter.StateIdle, session.StatusIdle, true, ""},
 		{adapter.StateNeedsInput, session.StatusWaiting, true, "which API?"},
 		{adapter.StateError, "", false, "boom"},
 	}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,16 +15,18 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
-	"xanax/internal/store"
+	"github.com/LeJamon/rvr/internal/attach"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/store"
+	"github.com/LeJamon/rvr/internal/supervisor"
 )
 
 func newTestModel(sessions []*session.Session) model {
 	cfg := config.Default()
 	grp := grouped(sessions)
 	m := model{
-		deps:          Deps{Cfg: cfg, SocketDir: "/tmp/xanax-nonexistent-test"},
+		deps:          Deps{Cfg: cfg, SocketDir: "/tmp/rvr-nonexistent-test"},
 		composer:      textarea.New(),
 		renameInput:   textinput.New(),
 		filterInput:   textinput.New(),
@@ -57,6 +60,8 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyTab}
 	case "ctrl+o":
 		return tea.KeyMsg{Type: tea.KeyCtrlO}
+	case "ctrl+x":
+		return tea.KeyMsg{Type: tea.KeyCtrlX}
 	case "ctrl+k":
 		return tea.KeyMsg{Type: tea.KeyCtrlK}
 	case "ctrl+c":
@@ -65,6 +70,16 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+	}
+}
+
+func matchingPreviewMsg(m model, id, text string) previewMsg {
+	return previewMsg{
+		id:         id,
+		generation: m.previewGeneration,
+		mode:       m.previewMode,
+		label:      m.previewLabel,
+		text:       text,
 	}
 }
 
@@ -88,6 +103,22 @@ func sampleSessions() []*session.Session {
 		{ID: "wait0001", Title: "which API?", Harness: "pi", RepoPath: "/x/b", Status: session.StatusWaiting, StatusDetail: "pick one", CreatedAt: now},
 		{ID: "done0001", Title: "release notes", Harness: "opencode", RepoPath: "/x/c", Status: session.StatusCompleted, CreatedAt: now},
 	}
+}
+
+func manyRunningSessions(n int) []*session.Session {
+	now := time.Now()
+	sessions := make([]*session.Session, 0, n)
+	for i := range n {
+		sessions = append(sessions, &session.Session{
+			ID:        fmt.Sprintf("sess%04d", i),
+			Title:     fmt.Sprintf("session %02d", i),
+			Harness:   "opencode",
+			RepoPath:  "/x/many",
+			Status:    session.StatusRunning,
+			CreatedAt: now.Add(-time.Duration(i) * time.Minute),
+		})
+	}
+	return sessions
 }
 
 func TestGroupedOrdersWaitingFirst(t *testing.T) {
@@ -133,6 +164,93 @@ func TestArrowNavigationBetweenSessionsAndComposer(t *testing.T) {
 	}
 }
 
+func TestComposerArrowsMoveWithinText(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m.composer.SetValue("first row\nsecond row")
+	m.reflowComposer()
+	if line := m.composer.Line(); line != 1 {
+		t.Fatalf("initial composer line = %d, want 1", line)
+	}
+
+	m = send(m, "up")
+	if !m.onComposer {
+		t.Fatal("up with composer text moved selection to a session")
+	}
+	if line := m.composer.Line(); line != 0 {
+		t.Fatalf("composer line after up = %d, want 0", line)
+	}
+
+	m = send(m, "down")
+	if !m.onComposer {
+		t.Fatal("down with composer text moved selection to a session")
+	}
+	if line := m.composer.Line(); line != 1 {
+		t.Fatalf("composer line after down = %d, want 1", line)
+	}
+	if got := m.composer.Value(); got != "first row\nsecond row" {
+		t.Errorf("composer value changed during arrow navigation: %q", got)
+	}
+}
+
+func TestComposerCancelClearsTextAndResetsHeight(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m.composer.SetValue("first row\nsecond row")
+	m.reflowComposer()
+	if height := m.composer.Height(); height <= 1 {
+		t.Fatalf("composer height before cancel = %d, want more than 1", height)
+	}
+
+	m = send(m, "esc")
+	if !m.onComposer {
+		t.Fatal("cancel moved selection away from the composer")
+	}
+	if got := m.composer.Value(); got != "" {
+		t.Errorf("composer after cancel = %q, want empty", got)
+	}
+	if height := m.composer.Height(); height != 1 {
+		t.Errorf("composer height after cancel = %d, want 1", height)
+	}
+}
+
+func TestComposerFooterReflectsDraftArrowBehavior(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	if foot := m.footer(); !strings.Contains(foot, "↑ sessions") {
+		t.Fatalf("empty-composer footer should advertise session navigation: %q", foot)
+	}
+
+	m.composer.SetValue("draft")
+	foot := m.footer()
+	for _, want := range []string{"↑/↓ cursor", "esc clear"} {
+		if !strings.Contains(foot, want) {
+			t.Errorf("draft footer missing %q: %q", want, foot)
+		}
+	}
+}
+
+func TestVimNavigationKeysMoveSelection(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 1)
+	m = send(m, "k")
+	if m.onComposer || m.cursor != 0 {
+		t.Fatalf("k should move selection up: onComposer=%v cursor=%d", m.onComposer, m.cursor)
+	}
+	m = send(m, "j")
+	if m.onComposer || m.cursor != 1 {
+		t.Fatalf("j should move selection down: onComposer=%v cursor=%d", m.onComposer, m.cursor)
+	}
+}
+
+func TestComposerAcceptsVimNavigationLetters(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m = send(m, "j")
+	m = send(m, "k")
+	if !m.onComposer {
+		t.Fatal("j/k typed in the composer should not move selection to a session")
+	}
+	if m.composer.Value() != "jk" {
+		t.Errorf("composer = %q, want jk", m.composer.Value())
+	}
+}
+
 func TestComposerAcceptsTextOnlyWhenSelected(t *testing.T) {
 	// Selected: typing lands in the composer.
 	m := newTestModel(sampleSessions())
@@ -163,7 +281,7 @@ func TestComposerEnterLaunchesAndClears(t *testing.T) {
 	}
 }
 
-func TestSessionLetterAndCtrlKeysAct(t *testing.T) {
+func TestCtrlXRemovesTerminalSession(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -178,14 +296,153 @@ func TestSessionLetterAndCtrlKeysAct(t *testing.T) {
 	m.deps.Store = st
 	m.deps.SocketDir = t.TempDir()
 
-	// Plain 'k' removes (no Ctrl needed).
-	_, cmd := m.Update(key("k"))
+	_, cmd := m.Update(key("ctrl+x"))
 	if cmd == nil {
-		t.Fatal("k on a selected session returned no command")
+		t.Fatal("ctrl+x on a terminal selected session returned no command")
 	}
 	cmd()
 	if _, err := st.GetSession("todelete01"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("k did not remove the session: %v", err)
+		t.Errorf("ctrl+x did not remove the session: %v", err)
+	}
+}
+
+func TestLiveRemoveRequiresConfirmation(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sess := &session.Session{ID: "live0001", Title: "running", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.Store = st
+	m.deps.SocketDir = t.TempDir()
+
+	next, cmd := m.Update(key("ctrl+x"))
+	m = next.(model)
+	if cmd != nil {
+		t.Fatal("first remove press on a live session should only arm confirmation")
+	}
+	if m.confirmRemoveID != "live0001" {
+		t.Fatalf("confirmRemoveID = %q, want live0001", m.confirmRemoveID)
+	}
+	if _, err := st.GetSession("live0001"); err != nil {
+		t.Fatalf("first remove press deleted the live session: %v", err)
+	}
+	if foot := m.footer(); !strings.Contains(foot, "again to kill and remove live0001") {
+		t.Errorf("footer did not show remove confirmation: %q", foot)
+	}
+
+	next, cmd = m.Update(key("ctrl+x"))
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("second remove press on the same live session returned no command")
+	}
+	cmd()
+	if _, err := st.GetSession("live0001"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("confirmed remove did not delete the session: %v", err)
+	}
+	if m.confirmRemoveID != "" {
+		t.Errorf("confirmation remained armed after dispatch: %q", m.confirmRemoveID)
+	}
+}
+
+func TestRemoveConfirmationDisarmsOnOtherKey(t *testing.T) {
+	sess := &session.Session{ID: "live0002", Title: "running", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning}
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+
+	next, cmd := m.Update(key("ctrl+x"))
+	m = next.(model)
+	if cmd != nil || m.confirmRemoveID != "live0002" {
+		t.Fatalf("first remove did not arm confirmation: cmd=%v id=%q", cmd, m.confirmRemoveID)
+	}
+
+	next, _ = m.Update(key("j"))
+	m = next.(model)
+	if m.confirmRemoveID != "" {
+		t.Errorf("non-remove key did not disarm confirmation: %q", m.confirmRemoveID)
+	}
+}
+
+func TestKillFailureDoesNotDeleteSession(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sess := &session.Session{ID: "killfail1", Title: "running", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.Store = st
+	m.deps.SocketDir = t.TempDir()
+	m.attachAliveFn = func(string) bool { return true }
+	m.attachKillFn = func(string) error { return errors.New("socket closed") }
+
+	next, _ := m.Update(key("ctrl+x"))
+	m = next.(model)
+	next, cmd := m.Update(key("ctrl+x"))
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("confirmed live remove returned no command")
+	}
+	raw := cmd()
+	msg, ok := raw.(actionDoneMsg)
+	if !ok {
+		t.Fatalf("remove command returned %T, want actionDoneMsg", raw)
+	}
+	if !strings.Contains(msg.status, "remove failed:") || !strings.Contains(msg.status, "socket closed") {
+		t.Fatalf("status = %q, want kill failure", msg.status)
+	}
+	if _, err := st.GetSession("killfail1"); err != nil {
+		t.Fatalf("kill failure deleted the session: %v", err)
+	}
+	if m.confirmRemoveID != "" {
+		t.Errorf("confirmation remained armed after confirmed remove: %q", m.confirmRemoveID)
+	}
+}
+
+func TestDashboardRemoveArmsConfirmationForSocketlessSupervisorOwner(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sess := &session.Session{ID: "owned001", Title: "resuming", RepoPath: "/x", Harness: "opencode", Status: session.StatusCompleted}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	socketDir := t.TempDir()
+	lease, err := supervisor.TryAcquireLease(filepath.Join(socketDir, sess.ID+".sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.Store = st
+	m.deps.SocketDir = socketDir
+	next, cmd := m.Update(key("ctrl+x"))
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("terminal remove returned no command")
+	}
+	msg, ok := cmd().(actionDoneMsg)
+	if !ok {
+		t.Fatalf("remove returned %T, want actionDoneMsg", cmd())
+	}
+	next, _ = m.Update(msg)
+	m = next.(model)
+	if m.confirmRemoveID != sess.ID {
+		t.Fatalf("confirmRemoveID = %q, want socketless owner armed", m.confirmRemoveID)
+	}
+	if _, err := st.GetSession(sess.ID); err != nil {
+		t.Fatalf("dashboard removed session while supervisor owned it: %v", err)
 	}
 }
 
@@ -194,6 +451,184 @@ func TestRightOpensSelectedSession(t *testing.T) {
 	_, cmd := m.Update(key("right"))
 	if cmd == nil {
 		t.Fatal("right arrow on a selected session returned no command")
+	}
+}
+
+func TestOpenTerminalSessionShowsStoredLogInsteadOfResume(t *testing.T) {
+	logsDir := t.TempDir()
+	sess := &session.Session{
+		ID:                "donewithlog1",
+		Title:             "done",
+		RepoPath:          "/x",
+		Harness:           "codex",
+		HarnessSessionRef: "codex-ref",
+		Status:            session.StatusCompleted,
+	}
+	raw := []byte("\x1b[?1049h\x1b[2J\x1b[40;1HFINAL SCREEN")
+	if err := os.WriteFile(filepath.Join(logsDir, sess.ID+".raw"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.LogsDir = logsDir
+	next, cmd := m.Update(key("enter"))
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("enter on a terminal session returned no inspect command")
+	}
+	if !m.previewOn || m.previewLabel != "Logs" {
+		t.Fatalf("enter did not open log preview: on=%v label=%q", m.previewOn, m.previewLabel)
+	}
+	msg, ok := cmd().(previewMsg)
+	if !ok {
+		t.Fatalf("inspect command returned %T, want previewMsg", cmd())
+	}
+	if msg.label != "Logs" || !strings.Contains(msg.text, "FINAL SCREEN") {
+		t.Fatalf("log preview = (%q, %q), want rendered log content", msg.label, msg.text)
+	}
+	if strings.Contains(msg.text, "\x1b") {
+		t.Fatalf("log preview leaked raw escape sequences: %q", msg.text)
+	}
+}
+
+func TestLogsBindingShowsStoredLogForLiveSession(t *testing.T) {
+	logsDir := t.TempDir()
+	sess := &session.Session{ID: "livewithlog", Title: "live", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning}
+	if err := os.WriteFile(filepath.Join(logsDir, sess.ID+".raw"), []byte("\x1b[3;1Hstored output"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.LogsDir = logsDir
+	m.attachAliveFn = func(string) bool { return true }
+	next, cmd := m.Update(key("l"))
+	m = next.(model)
+	if cmd == nil || !m.previewOn || m.previewLabel != "Logs" {
+		t.Fatalf("logs binding did not open log preview: cmd=%v on=%v label=%q", cmd, m.previewOn, m.previewLabel)
+	}
+	msg, ok := cmd().(previewMsg)
+	if !ok {
+		t.Fatalf("logs command returned %T, want previewMsg", cmd())
+	}
+	if !strings.Contains(msg.text, "stored output") {
+		t.Fatalf("logs preview missing stored output: %q", msg.text)
+	}
+}
+
+func TestTerminalPreviewFallsBackToStoredLog(t *testing.T) {
+	logsDir := t.TempDir()
+	sess := &session.Session{ID: "deadpeek01", Title: "dead", RepoPath: "/x", Harness: "opencode", Status: session.StatusFailed}
+	if err := os.WriteFile(filepath.Join(logsDir, sess.ID+".raw"), []byte("\x1b[4;1Hfailure trace"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.deps.LogsDir = logsDir
+	next, cmd := m.Update(key("space"))
+	m = next.(model)
+	if cmd == nil || !m.previewOn {
+		t.Fatalf("space on terminal session did not open preview: cmd=%v on=%v", cmd, m.previewOn)
+	}
+	msg, ok := cmd().(previewMsg)
+	if !ok {
+		t.Fatalf("preview command returned %T, want previewMsg", cmd())
+	}
+	if msg.label != "Logs" || !strings.Contains(msg.text, "failure trace") {
+		t.Fatalf("terminal preview = (%q, %q), want stored log fallback", msg.label, msg.text)
+	}
+}
+
+func TestInteractiveSuccessStatusStaysVisible(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	next, _ := m.Update(actionDoneMsg{status: interactiveAttachResultStatus("attach", "run00001", attach.Detached, nil)})
+	foot := next.(model).footer()
+	if !strings.Contains(foot, "detached from run00001 (still running)") {
+		t.Fatalf("footer missing detach status: %q", foot)
+	}
+}
+
+func TestInteractiveReturnStatusIsNeutralWithoutChildReport(t *testing.T) {
+	tests := []struct {
+		sub  string
+		want string
+	}{
+		{sub: "attach", want: "returned from attach"},
+		{sub: "resume", want: "returned from resume"},
+		{sub: "new", want: "returned from new session"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.sub, func(t *testing.T) {
+			if got := interactiveReturnStatus(tt.sub); got != tt.want {
+				t.Fatalf("interactiveReturnStatus = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReportedInteractiveStatusUsesActualAttachResult(t *testing.T) {
+	terminal := &session.Session{Status: session.StatusCompleted}
+	tests := []struct {
+		name   string
+		sub    string
+		id     string
+		result attach.Result
+		sess   *session.Session
+		want   string
+	}{
+		{
+			name: "detach wins over stale terminal row", sub: "resume", id: "resume01",
+			result: attach.Detached, sess: terminal,
+			want: "detached from resume01 (still running)",
+		},
+		{
+			name: "session exited", sub: "attach", id: "ended001",
+			result: attach.SessionExited, sess: terminal,
+			want: "session ended001 ended (completed)",
+		},
+		{
+			name: "disconnected", sub: "attach", id: "lost0001",
+			result: attach.Disconnected,
+			want:   "disconnected from lost0001",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := interactiveAttachResultStatus(tt.sub, tt.id, tt.result, tt.sess); got != tt.want {
+				t.Fatalf("interactiveAttachResultStatus = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSessionCreatedSinceRequiresUniqueNewSession(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	create := func(id string) {
+		t.Helper()
+		if err := st.CreateSession(&session.Session{
+			ID: id, Title: id, RepoPath: "/x", Harness: "opencode", Status: session.StatusStarting,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	create("existing")
+	m := newTestModel(nil)
+	m.deps.Store = st
+	known, ok := m.snapshotSessionIDs()
+	if !ok {
+		t.Fatal("snapshotSessionIDs failed")
+	}
+	create("created1")
+	if got := m.sessionCreatedSince(known); got != "created1" {
+		t.Fatalf("sessionCreatedSince = %q, want created1", got)
+	}
+	create("created2")
+	if got := m.sessionCreatedSince(known); got != "" {
+		t.Fatalf("ambiguous sessionCreatedSince = %q, want empty", got)
 	}
 }
 
@@ -471,6 +906,19 @@ func TestPickerArrowsNavigateWhileSearching(t *testing.T) {
 	}
 }
 
+func TestPickerSearchAcceptsVimNavigationLetters(t *testing.T) {
+	m := newTestModel(nil)
+	m = send(m, "tab")
+	m = send(m, "j")
+	m = send(m, "k")
+	if !m.searchFocused {
+		t.Fatal("picker search should stay focused")
+	}
+	if m.search != "jk" {
+		t.Errorf("search = %q, want jk", m.search)
+	}
+}
+
 // TestPickerDefaultKey ensures pressing 'd' on the action row while a harness is
 // highlighted sets it as the default in the config.
 func TestPickerDefaultKey(t *testing.T) {
@@ -743,7 +1191,7 @@ func TestReloadWhileFilteringZeroKeepsSelection(t *testing.T) {
 
 // TestReloadEmptyWithFilterFocusesComposer guards the flip side of the case
 // above: when the underlying list becomes genuinely empty while a filter string
-// is still set (e.g. the last matching session was removed with k), the
+// is still set (e.g. the last matching session was removed), the
 // composer MUST be focused — otherwise current() is nil and every keystroke is
 // silently dropped with no way back but the arrow keys.
 func TestReloadEmptyWithFilterFocusesComposer(t *testing.T) {
@@ -800,7 +1248,7 @@ func TestEmptyFilteredListArrowsKeepEscAvailable(t *testing.T) {
 func TestViewRendersWithoutPanic(t *testing.T) {
 	m := newTestModel(sampleSessions())
 	out := m.View()
-	if !strings.Contains(out, "xanax") {
+	if !strings.Contains(out, "rvr") {
 		t.Error("view missing header")
 	}
 	if !strings.Contains(out, "Needs input") {
@@ -821,6 +1269,87 @@ func TestEmptyStateRenders(t *testing.T) {
 	}
 }
 
+func TestRenderListWindowsAroundSelectedSession(t *testing.T) {
+	m := selectSession(newTestModel(manyRunningSessions(24)), 12)
+	out := stripANSI(m.renderList(9))
+	for _, want := range []string{"session 12", "more sessions above", "more sessions below"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("windowed list missing %q:\n%s", want, out)
+		}
+	}
+	for _, hidden := range []string{"session 00", "session 23"} {
+		if strings.Contains(out, hidden) {
+			t.Fatalf("windowed list rendered hidden row %q:\n%s", hidden, out)
+		}
+	}
+}
+
+func TestViewWindowsLongSessionListToTerminalHeight(t *testing.T) {
+	m := selectSession(newTestModel(manyRunningSessions(30)), 20)
+	m.width, m.height = 80, 24
+
+	out := m.View()
+	plain := stripANSI(out)
+	if h := lipgloss.Height(out); h != m.height {
+		t.Fatalf("view height = %d, want %d", h, m.height)
+	}
+	for _, want := range []string{"rvr", "session 20", "more sessions above", "more sessions below"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("long-list view missing %q:\n%s", want, plain)
+		}
+	}
+	if last := lastLine(out); !strings.Contains(last, "select") {
+		t.Fatalf("footer is not pinned to the last line: %q", last)
+	}
+}
+
+func TestViewWindowsLongSessionListWithPreview(t *testing.T) {
+	m := selectSession(newTestModel(manyRunningSessions(30)), 20)
+	m.width, m.height = 80, 24
+	m.composer.SetHeight(1)
+	m.previewOn = true
+	m.previewText = strings.Join([]string{
+		"preview line 1",
+		"preview line 2",
+		"preview line 3",
+		"preview line 4",
+		"preview line 5",
+	}, "\n")
+
+	out := m.View()
+	plain := stripANSI(out)
+	if h := lipgloss.Height(out); h != m.height {
+		t.Fatalf("view height with preview = %d, want %d", h, m.height)
+	}
+	for _, want := range []string{"session 20", "Preview", "preview line 5", "more sessions above"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("preview long-list view missing %q:\n%s", want, plain)
+		}
+	}
+}
+
+func TestRenderRowShowsFailedDetailAndExitCode(t *testing.T) {
+	exitCode := 127
+	sess := &session.Session{
+		ID:           "faildetail1",
+		Title:        "launch failed",
+		Harness:      "opencode",
+		RepoPath:     "/x/a",
+		Status:       session.StatusFailed,
+		StatusDetail: "exec: opencode: not found",
+		ExitCode:     &exitCode,
+		CreatedAt:    time.Now(),
+	}
+	m := newTestModel([]*session.Session{sess})
+
+	row := stripANSI(m.renderRow(sess, false))
+	for _, want := range []string{"exec: opencode: not found", "exit 127"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("row %q missing %q", row, want)
+		}
+	}
+}
+
 func TestPreviewOpensOnlyWithSpace(t *testing.T) {
 	m := selectSession(newTestModel(sampleSessions()), 0)
 	if m.renderPreview() != "" {
@@ -835,13 +1364,16 @@ func TestPreviewOpensOnlyWithSpace(t *testing.T) {
 	if !m.previewOn || cmd == nil {
 		t.Fatalf("space should open the preview and fetch: on=%v cmd-nil=%v", m.previewOn, cmd == nil)
 	}
-	if m.previewCmd() == nil {
-		t.Fatal("open preview must keep scheduling fetches (tick refresh)")
+	if m.previewCmd() != nil {
+		t.Fatal("open preview scheduled a duplicate fetch while the first was pending")
 	}
-	next, _ = m.Update(previewMsg{id: m.selectedID(), text: "agent screen"})
+	next, _ = m.Update(matchingPreviewMsg(m, m.selectedID(), "agent screen"))
 	m = next.(model)
 	if !strings.Contains(m.renderPreview(), "agent screen") {
 		t.Errorf("preview not rendered after space + fetch: %q", m.renderPreview())
+	}
+	if m.previewCmd() == nil {
+		t.Fatal("accepted live preview did not allow the next tick refresh")
 	}
 
 	m = send(m, "space")
@@ -850,10 +1382,33 @@ func TestPreviewOpensOnlyWithSpace(t *testing.T) {
 	}
 }
 
+func TestPreviewShowsFailedDetailWhenNoSnapshot(t *testing.T) {
+	exitCode := 1
+	sess := &session.Session{
+		ID:           "failpreview1",
+		Title:        "failed",
+		Harness:      "opencode",
+		RepoPath:     "/x/a",
+		Status:       session.StatusFailed,
+		StatusDetail: "adapter init failed",
+		ExitCode:     &exitCode,
+		CreatedAt:    time.Now(),
+	}
+	m := selectSession(newTestModel([]*session.Session{sess}), 0)
+	m.previewOn = true
+
+	preview := stripANSI(m.renderPreview())
+	for _, want := range []string{"adapter init failed", "exit 1"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("preview %q missing %q", preview, want)
+		}
+	}
+}
+
 func TestPreviewClosesWhenSelectionMoves(t *testing.T) {
 	m := selectSession(newTestModel(sampleSessions()), 0)
 	m = send(m, "space")
-	next, _ := m.Update(previewMsg{id: m.selectedID(), text: "peek"})
+	next, _ := m.Update(matchingPreviewMsg(m, m.selectedID(), "peek"))
 	m = next.(model)
 	m = send(m, "down")
 	if m.previewOn || m.renderPreview() != "" {
@@ -868,7 +1423,7 @@ func TestPreviewClosesWhenSelectionMoves(t *testing.T) {
 func TestPreviewClosesWhenPeekedSessionVanishes(t *testing.T) {
 	m := selectSession(newTestModel(sampleSessions()), 0)
 	m = send(m, "space")
-	next, _ := m.Update(previewMsg{id: m.selectedID(), text: "peek"})
+	next, _ := m.Update(matchingPreviewMsg(m, m.selectedID(), "peek"))
 	m = next.(model)
 
 	all := sampleSessions()
@@ -884,11 +1439,258 @@ func TestPreviewStaleResultIgnoredWhenClosed(t *testing.T) {
 	m := selectSession(newTestModel(sampleSessions()), 0)
 	m = send(m, "space")
 	id := m.selectedID()
+	late := matchingPreviewMsg(m, id, "late")
 	m = send(m, "space") // closed again before the in-flight fetch lands
-	next, _ := m.Update(previewMsg{id: id, text: "late"})
+	next, _ := m.Update(late)
 	m = next.(model)
 	if m.previewText != "" || m.renderPreview() != "" {
 		t.Error("preview result applied while closed")
+	}
+}
+
+func TestPreviewResultFromPreviousModeIsIgnored(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	next, _ := m.Update(key("space"))
+	m = next.(model)
+	oldLive := matchingPreviewMsg(m, m.selectedID(), "stale live preview")
+	oldLive.label = "Preview"
+
+	next, _ = m.Update(key("l"))
+	m = next.(model)
+	if m.previewMode != previewStored {
+		t.Fatalf("logs binding mode = %v, want previewStored", m.previewMode)
+	}
+	stored := matchingPreviewMsg(m, m.selectedID(), "stored output")
+	stored.label = "Logs"
+	next, _ = m.Update(stored)
+	m = next.(model)
+
+	next, _ = m.Update(oldLive)
+	m = next.(model)
+	if m.previewText != "stored output" || m.previewLabel != "Logs" || m.previewMode != previewStored {
+		t.Fatalf("stale live result overwrote logs mode: text=%q label=%q mode=%v",
+			m.previewText, m.previewLabel, m.previewMode)
+	}
+}
+
+func TestTerminalStoredPreviewIsCachedAcrossTicks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sess := &session.Session{
+		ID: "cached-terminal", Title: "done", RepoPath: "/x", Harness: "opencode",
+		Status: session.StatusCompleted,
+	}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Finish(sess.ID, session.StatusCompleted, 0); err != nil {
+		t.Fatal(err)
+	}
+	logsDir := filepath.Join(dir, "logs")
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(logsDir, sess.ID+".raw"), []byte("final output"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := st.GetSession(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := selectSession(newTestModel([]*session.Session{stored}), 0)
+	m.deps.Store = st
+	m.deps.LogsDir = logsDir
+
+	next, initial := m.Update(key("l"))
+	m = next.(model)
+	msg, ok := initial().(previewMsg)
+	if !ok {
+		t.Fatalf("initial stored preview returned %T, want previewMsg", initial())
+	}
+	next, _ = m.Update(msg)
+	m = next.(model)
+	if !m.previewStatic || !strings.Contains(m.previewText, "final output") {
+		t.Fatalf("terminal preview was not cached: static=%v text=%q", m.previewStatic, m.previewText)
+	}
+
+	next, cmd := m.Update(tickMsg{})
+	m = next.(model)
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("tick returned %T, want tea.BatchMsg", cmd())
+	}
+	for _, c := range batch {
+		if _, ok := c().(previewMsg); ok {
+			t.Fatal("tick replayed an immutable terminal stored log")
+		}
+	}
+}
+
+func TestTerminalPreviewCacheInvalidatesWhenSessionResumes(t *testing.T) {
+	terminal := &session.Session{
+		ID: "resumed-cache", Title: "done", RepoPath: "/x", Harness: "opencode",
+		Status: session.StatusCompleted,
+	}
+	m := selectSession(newTestModel([]*session.Session{terminal}), 0)
+	m.previewOn = true
+	m.previewMode = previewStored
+	m.previewLabel = "Logs"
+	m.previewText = "old terminal output"
+	m.previewStatic = true
+	m.previewGeneration = 4
+
+	running := *terminal
+	running.Status = session.StatusRunning
+	next, _ := m.Update(sessionsMsg{sessions: []*session.Session{&running}})
+	m = next.(model)
+	if m.previewStatic || m.previewText != "" || m.previewGeneration == 4 {
+		t.Fatalf("resume did not invalidate terminal cache: static=%v text=%q generation=%d",
+			m.previewStatic, m.previewText, m.previewGeneration)
+	}
+}
+
+func TestTerminalPreviewCacheInvalidatesAfterUnobservedResumeCycle(t *testing.T) {
+	ended := time.Now().Add(-time.Minute)
+	terminal := &session.Session{
+		ID: "cycled-cache", Title: "done", RepoPath: "/x", Harness: "opencode",
+		Status: session.StatusCompleted, UpdatedAt: ended, EndedAt: &ended,
+	}
+	m := selectSession(newTestModel([]*session.Session{terminal}), 0)
+	m.previewOn = true
+	m.previewMode = previewStored
+	m.previewLabel = "Logs"
+	m.previewText = "old lifecycle output"
+	m.previewStatic = true
+	m.previewGeneration = 7
+
+	cycled := *terminal
+	newEnd := time.Now()
+	cycled.UpdatedAt = newEnd
+	cycled.EndedAt = &newEnd
+	next, _ := m.Update(sessionsMsg{sessions: []*session.Session{&cycled}})
+	m = next.(model)
+	if m.previewStatic || m.previewText != "" || m.previewGeneration == 7 {
+		t.Fatalf("completed resume cycle did not invalidate terminal cache: static=%v text=%q generation=%d",
+			m.previewStatic, m.previewText, m.previewGeneration)
+	}
+}
+
+func TestPendingTerminalPreviewIsInvalidatedAfterUnobservedResumeCycle(t *testing.T) {
+	ended := time.Now().Add(-time.Minute)
+	terminal := &session.Session{
+		ID: "pending-cycle", Title: "done", RepoPath: "/x", Harness: "opencode",
+		Status: session.StatusCompleted, UpdatedAt: ended, EndedAt: &ended,
+	}
+	m := selectSession(newTestModel([]*session.Session{terminal}), 0)
+	m.previewOn = true
+	m.previewMode = previewStored
+	m.previewLabel = "Logs"
+	m.previewGeneration = 9
+	m.previewPending = true
+	stale := matchingPreviewMsg(m, terminal.ID, "old lifecycle output")
+	stale.static = true
+
+	cycled := *terminal
+	newEnd := time.Now()
+	cycled.UpdatedAt = newEnd
+	cycled.EndedAt = &newEnd
+	next, _ := m.Update(sessionsMsg{sessions: []*session.Session{&cycled}})
+	m = next.(model)
+	if m.previewGeneration == stale.generation {
+		t.Fatal("completed resume cycle did not invalidate pending preview generation")
+	}
+	next, cmd := m.Update(stale)
+	m = next.(model)
+	if m.previewText != "" || m.previewStatic {
+		t.Fatalf("stale pending replay was accepted: static=%v text=%q", m.previewStatic, m.previewText)
+	}
+	if cmd == nil {
+		t.Fatal("stale replay did not schedule the current lifecycle preview")
+	}
+}
+
+func TestPreviewTickDoesNotOverlapPendingReplay(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	m.deps.Store = st
+	next, _ := m.Update(key("l"))
+	m = next.(model)
+	if !m.previewPending {
+		t.Fatal("opening stored preview did not mark its request pending")
+	}
+
+	next, cmd := m.Update(tickMsg{})
+	m = next.(model)
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("tick returned %T, want tea.BatchMsg", cmd())
+	}
+	for _, c := range batch {
+		if _, ok := c().(previewMsg); ok {
+			t.Fatal("tick started a second preview replay while the first was pending")
+		}
+	}
+}
+
+func TestReconcileTickRunsPeriodicallyWithoutOverlap(t *testing.T) {
+	calls := 0
+	m := newTestModel(nil)
+	m.deps.Reconcile = func() error {
+		calls++
+		return nil
+	}
+
+	next, cmd := m.Update(reconcileTickMsg{})
+	m = next.(model)
+	if !m.reconcilePending || cmd == nil {
+		t.Fatalf("reconcile tick did not start work: pending=%v cmd=nil:%v", m.reconcilePending, cmd == nil)
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("reconcile tick command = %T len=%d, want two-command batch", cmd(), len(batch))
+	}
+	done, ok := batch[0]().(reconcileDoneMsg)
+	if !ok {
+		t.Fatalf("reconcile command returned %T, want reconcileDoneMsg", batch[0]())
+	}
+	if done.err != nil || calls != 1 {
+		t.Fatalf("reconcile result = %v, calls=%d", done.err, calls)
+	}
+	next, _ = m.Update(done)
+	m = next.(model)
+	if m.reconcilePending {
+		t.Fatal("completed reconciliation left pending set")
+	}
+	next, _ = m.Update(reconcileDoneMsg{err: errors.New("temporary")})
+	m = next.(model)
+	if !strings.Contains(m.status, "reconcile failed: temporary") {
+		t.Fatalf("reconcile error status = %q", m.status)
+	}
+	next, _ = m.Update(reconcileDoneMsg{})
+	m = next.(model)
+	if m.status != "" {
+		t.Fatalf("successful reconciliation retained stale error status %q", m.status)
+	}
+	m.status = "user action completed"
+	next, _ = m.Update(reconcileDoneMsg{})
+	m = next.(model)
+	if m.status != "user action completed" {
+		t.Fatalf("successful reconciliation cleared unrelated status %q", m.status)
+	}
+
+	m.reconcilePending = true
+	next, cmd = m.Update(reconcileTickMsg{})
+	m = next.(model)
+	if calls != 1 || cmd == nil {
+		t.Fatalf("overlapping tick started work: calls=%d cmd=nil:%v", calls, cmd == nil)
 	}
 }
 
@@ -905,7 +1707,17 @@ func TestPreviewTickKeepsFetchingWhileOpen(t *testing.T) {
 	defer st.Close()
 	m := selectSession(newTestModel(sampleSessions()), 0)
 	m.deps.Store = st // the tick batch also runs reload(), which needs a store
-	m = send(m, "space")
+	next, initial := m.Update(key("space"))
+	m = next.(model)
+	if initial == nil {
+		t.Fatal("opening preview returned no initial fetch")
+	}
+	initialMsg, ok := initial().(previewMsg)
+	if !ok {
+		t.Fatalf("initial preview command returned %T, want previewMsg", initial())
+	}
+	next, _ = m.Update(initialMsg)
+	m = next.(model)
 
 	next, cmd := m.Update(tickMsg{})
 	m = next.(model)
@@ -933,7 +1745,7 @@ func TestPreviewTickKeepsFetchingWhileOpen(t *testing.T) {
 func TestPreviewClosesOnMoveUpAndFilterNarrow(t *testing.T) {
 	m := selectSession(newTestModel(sampleSessions()), 1)
 	m = send(m, "space")
-	next, _ := m.Update(previewMsg{id: m.selectedID(), text: "peek"})
+	next, _ := m.Update(matchingPreviewMsg(m, m.selectedID(), "peek"))
 	m = next.(model)
 	m = send(m, "up")
 	if m.previewOn || m.renderPreview() != "" {
@@ -942,7 +1754,7 @@ func TestPreviewClosesOnMoveUpAndFilterNarrow(t *testing.T) {
 
 	m2 := selectSession(newTestModel(sampleSessions()), 0) // wait0001 peeked
 	m2 = send(m2, "space")
-	next2, _ := m2.Update(previewMsg{id: m2.selectedID(), text: "peek"})
+	next2, _ := m2.Update(matchingPreviewMsg(m2, m2.selectedID(), "peek"))
 	m2 = next2.(model)
 	m2 = send(m2, "/")
 	for _, r := range "release" { // narrows to done0001; wait0001 drops out
@@ -959,7 +1771,7 @@ func TestPreviewClosesOnMoveUpAndFilterNarrow(t *testing.T) {
 func TestPreviewIgnoresResultForOtherSession(t *testing.T) {
 	m := selectSession(newTestModel(sampleSessions()), 0)
 	m = send(m, "space")
-	next, _ := m.Update(previewMsg{id: "someother1", text: "wrong session"})
+	next, _ := m.Update(matchingPreviewMsg(m, "someother1", "wrong session"))
 	m = next.(model)
 	if m.previewText != "" {
 		t.Errorf("stored a preview for a non-selected session: %q", m.previewText)
@@ -977,7 +1789,7 @@ func TestSpaceTypesIntoComposer(t *testing.T) {
 }
 
 // TestRebindingSessionAction proves a config remap changes which key acts: after
-// rebinding remove from 'k' to 'x', 'x' removes the session and 'k' is inert.
+// rebinding remove from Ctrl+X to 'x', 'x' removes the session and Ctrl+X is inert.
 func TestRebindingSessionAction(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
 	if err != nil {
@@ -991,11 +1803,14 @@ func TestRebindingSessionAction(t *testing.T) {
 	m := selectSession(newTestModel([]*session.Session{sess}), 0)
 	m.deps.Store = st
 	m.deps.SocketDir = t.TempDir()
-	m.deps.Cfg.Keys.Remove = config.Binding{"x"} // rebind k -> x
+	m.deps.Cfg.Keys.Remove = config.Binding{"x"} // rebind ctrl+x -> x
 
 	// The old key no longer acts.
-	if _, cmd := m.Update(key("k")); cmd != nil {
-		t.Fatal("'k' still acted after remove was rebound to 'x'")
+	if _, cmd := m.Update(key("ctrl+x")); cmd != nil {
+		t.Fatal("ctrl+x still acted after remove was rebound to 'x'")
+	}
+	if _, err := st.GetSession("rebind0001"); err != nil {
+		t.Fatalf("old remove key deleted the session: %v", err)
 	}
 	// The new key does.
 	_, cmd := m.Update(key("x"))
@@ -1018,6 +1833,13 @@ func TestFooterReflectsReboundKeys(t *testing.T) {
 	}
 }
 
+func TestSessionFooterShowsLeftBackHint(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	if foot := m.footer(); !strings.Contains(foot, "← back") {
+		t.Errorf("footer did not show left/back detach hint: %q", foot)
+	}
+}
+
 // TestSettingsKeyOpensEditor confirms 's' (from a selected session) opens the
 // keybindings editor with its search box focused.
 func TestSettingsKeyOpensEditor(t *testing.T) {
@@ -1028,6 +1850,19 @@ func TestSettingsKeyOpensEditor(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "Keybindings") {
 		t.Error("settings modal did not render its Keybindings panel")
+	}
+}
+
+func TestSettingsSearchAcceptsVimNavigationLetters(t *testing.T) {
+	m := selectSession(newTestModel(sampleSessions()), 0)
+	m = send(m, "s")
+	m = send(m, "j")
+	m = send(m, "k")
+	if !m.settingsOn {
+		t.Fatal("settings editor closed unexpectedly")
+	}
+	if m.settingsSearch != "jk" {
+		t.Errorf("settingsSearch = %q, want jk", m.settingsSearch)
 	}
 }
 

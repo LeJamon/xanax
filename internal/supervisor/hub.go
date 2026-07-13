@@ -3,14 +3,16 @@ package supervisor
 import (
 	"net"
 	"sync"
+	"time"
 
-	"xanax/internal/ringbuf"
-	"xanax/internal/wire"
+	"github.com/LeJamon/rvr/internal/ringbuf"
+	"github.com/LeJamon/rvr/internal/wire"
 )
 
 const (
 	clientQueueDepth = 256
 	outputChunkSize  = 32 * 1024
+	exitFlushTimeout = 2 * time.Second
 )
 
 // client is one attached connection. A dedicated writer goroutine drains out,
@@ -51,11 +53,14 @@ func (cl *client) close() {
 }
 
 func (cl *client) writeLoop() {
+	defer cl.close()
 	for {
 		select {
 		case f := <-cl.out:
 			if err := wire.Write(cl.conn, f.Type, f.Payload); err != nil {
-				cl.close()
+				return
+			}
+			if f.Type == wire.TypeExit {
 				return
 			}
 		case <-cl.done:
@@ -76,6 +81,7 @@ type hub struct {
 	modes   map[int]bool // sticky DEC modes the harness enabled (mouse, ...)
 	info    wire.Info
 	state   wire.State
+	exit    *wire.Exit
 }
 
 func newHub(ring *ringbuf.Ring, scr *screen, info wire.Info) *hub {
@@ -118,14 +124,45 @@ func (h *hub) broadcastState(s wire.State) {
 	h.fanout(jsonFrame(wire.TypeState, s))
 }
 
-// broadcastExit forwards the terminal outcome and closes all clients.
+// broadcastExit forwards the terminal outcome in queue order and waits for
+// each writer to flush it before the supervisor process exits. A single
+// absolute deadline bounds the total shutdown delay for slow clients.
 func (h *hub) broadcastExit(e wire.Exit) {
+	h.broadcastExitWithin(e, exitFlushTimeout)
+}
+
+func (h *hub) broadcastExitWithin(e wire.Exit, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	frame := jsonFrame(wire.TypeExit, e)
+
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.fanout(jsonFrame(wire.TypeExit, e))
+	terminal := e
+	h.exit = &terminal
+	var flushing []*client
 	for cl := range h.clients {
 		delete(h.clients, cl)
-		go func(c *client) { <-c.out; c.close() }(cl) // let the exit frame flush
+		_ = cl.conn.SetWriteDeadline(deadline)
+		if cl.enqueue(frame) {
+			flushing = append(flushing, cl)
+		} else {
+			cl.close()
+		}
+	}
+	h.mu.Unlock()
+
+	for _, cl := range flushing {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			cl.close()
+			continue
+		}
+		timer := time.NewTimer(remaining)
+		select {
+		case <-cl.done:
+			timer.Stop()
+		case <-timer.C:
+			cl.close()
+		}
 	}
 }
 
@@ -134,15 +171,16 @@ func (h *hub) broadcastExit(e wire.Exit) {
 // primer exactly matches the point where the live stream resumes.
 //
 // For a line-based harness the scrollback ring is replayed (history matters).
-// For a full-screen TUI (altScreen) the ring holds interleaved cursor-addressed
-// diff frames that garble when replayed — and the app won't repaint unchanged
-// cells — so the client receives an exact snapshot of the emulator's screen.
-func (h *hub) register(cl *client, altScreen bool) {
+// For a full-screen TUI (detected alt-screen or configured full_screen) the ring
+// holds interleaved cursor-addressed diff frames that garble when replayed, and
+// the app will not repaint unchanged cells, so the client receives an exact
+// snapshot of the emulator's screen.
+func (h *hub) register(cl *client, snapshotReplay bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	cl.enqueue(jsonFrame(wire.TypeHello, h.info))
 	primer := h.ring.Snapshot()
-	if altScreen {
+	if snapshotReplay {
 		primer = h.screen.snapshot()
 	}
 	// Re-enable sticky modes (mouse, bracketed paste, focus) the harness set —
@@ -152,6 +190,13 @@ func (h *hub) register(cl *client, altScreen bool) {
 		cl.enqueue(wire.Frame{Type: wire.TypeOutput, Payload: chunk})
 	}
 	cl.enqueue(jsonFrame(wire.TypeState, h.state))
+	if h.exit != nil {
+		_ = cl.conn.SetWriteDeadline(time.Now().Add(exitFlushTimeout))
+		if !cl.enqueue(jsonFrame(wire.TypeExit, *h.exit)) {
+			cl.close()
+		}
+		return
+	}
 	h.clients[cl] = struct{}{}
 }
 

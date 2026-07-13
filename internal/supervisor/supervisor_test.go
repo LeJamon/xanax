@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"xanax/internal/config"
-	"xanax/internal/session"
-	"xanax/internal/store"
-	"xanax/internal/supervisor"
-	"xanax/internal/wire"
+	"github.com/LeJamon/rvr/internal/config"
+	"github.com/LeJamon/rvr/internal/session"
+	"github.com/LeJamon/rvr/internal/store"
+	"github.com/LeJamon/rvr/internal/supervisor"
+	"github.com/LeJamon/rvr/internal/wire"
 )
 
 func testPaths(t *testing.T) config.Paths {
@@ -28,7 +28,7 @@ func testPaths(t *testing.T) config.Paths {
 	t.Cleanup(func() { os.RemoveAll(sockDir) })
 	return config.Paths{
 		DataDir:   data,
-		DBFile:    filepath.Join(data, "xanax.db"),
+		DBFile:    filepath.Join(data, "rvr.db"),
 		LogsDir:   filepath.Join(data, "logs"),
 		SocketDir: sockDir,
 	}
@@ -66,7 +66,7 @@ func TestSupervisorAttachAndKill(t *testing.T) {
 		Title:         "kill test",
 		RepoPath:      t.TempDir(),
 		Harness:       "generic",
-		InitialPrompt: "XANAXPROBE",
+		InitialPrompt: "RVRPROBE",
 		Status:        session.StatusStarting,
 	}
 	if err := st.CreateSession(sess); err != nil {
@@ -104,7 +104,7 @@ func TestSupervisorAttachAndKill(t *testing.T) {
 		}
 		switch f.Type {
 		case wire.TypeOutput:
-			if bytes.Contains(f.Payload, []byte("XANAXPROBE")) {
+			if bytes.Contains(f.Payload, []byte("RVRPROBE")) {
 				sawPrompt = true
 				// Now that we've seen output, request a kill.
 				wire.WriteJSON(conn, wire.TypeKill, struct{}{})
@@ -205,6 +205,66 @@ func TestAttachFullScreenReplaysSnapshot(t *testing.T) {
 	// ...but must not be a raw replay of the app's boot output.
 	if bytes.Contains(got, []byte("\x1b[?1049h")) {
 		t.Errorf("attach replayed raw output instead of a snapshot; got %.200q", got)
+	}
+
+	wire.WriteJSON(conn, wire.TypeKill, struct{}{})
+	time.Sleep(300 * time.Millisecond)
+}
+
+// TestAttachConfiguredFullScreenReplaysSnapshotWithoutAltScreen covers
+// full-screen diff-rendered harnesses, such as codex, that should use a rendered
+// screen snapshot even when alternate-screen detection is unavailable.
+func TestAttachConfiguredFullScreenReplaysSnapshotWithoutAltScreen(t *testing.T) {
+	paths := testPaths(t)
+	st, err := store.Open(paths.DBFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	sess := &session.Session{
+		ID: "fsflag01", Title: "fullscreen flag", RepoPath: t.TempDir(),
+		Harness: "generic", Status: session.StatusStarting,
+	}
+	if err := st.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	h := config.Harness{
+		Adapter: config.AdapterGeneric, Command: "sh", FullScreen: true,
+		Args: []string{"-c", `printf 'RAW-HISTORY-ONLY'; printf '\033[2J\033[3;1HCURRENT-FRAME'; sleep 300`},
+	}
+
+	go supervisor.Run(supervisor.Options{
+		Session: sess, Harness: h, Paths: paths, Store: st, Logger: quietLogger(),
+	})
+
+	sock := filepath.Join(paths.SocketDir, sess.ID+".sock")
+	waitAlive(t, sock)
+	time.Sleep(500 * time.Millisecond)
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	var got []byte
+	conn.SetReadDeadline(time.Now().Add(1500 * time.Millisecond))
+	for range 20 {
+		f, err := wire.Read(conn)
+		if err != nil {
+			break
+		}
+		if f.Type == wire.TypeOutput {
+			got = append(got, f.Payload...)
+		}
+	}
+
+	if !bytes.Contains(got, []byte("CURRENT-FRAME")) {
+		t.Errorf("snapshot missing current screen content; got %.200q", got)
+	}
+	if bytes.Contains(got, []byte("RAW-HISTORY-ONLY")) {
+		t.Errorf("configured full-screen attach replayed raw history; got %.200q", got)
 	}
 
 	wire.WriteJSON(conn, wire.TypeKill, struct{}{})
@@ -410,8 +470,8 @@ func TestGenericStateInferenceViaPattern(t *testing.T) {
 }
 
 // TestGenericStateInferenceViaIdle drives a generic harness that emits once and
-// then goes silent, and confirms the idle timeout flips it to waiting with an
-// "idle" detail.
+// then goes silent, and confirms the idle timeout flips it to the distinct,
+// non-actionable idle state.
 func TestGenericStateInferenceViaIdle(t *testing.T) {
 	paths := testPaths(t)
 	st, err := store.Open(paths.DBFile)
@@ -439,17 +499,17 @@ func TestGenericStateInferenceViaIdle(t *testing.T) {
 	sock := filepath.Join(paths.SocketDir, sess.ID+".sock")
 	waitAlive(t, sock)
 
-	// Poll the store until it reports waiting with an "idle" detail.
+	// Poll the store until it reports idle without pretending input is needed.
 	deadline := time.Now().Add(4 * time.Second)
 	var got *session.Session
 	for time.Now().Before(deadline) {
-		if got, err = st.GetSession(sess.ID); err == nil && got.Status == session.StatusWaiting {
+		if got, err = st.GetSession(sess.ID); err == nil && got.Status == session.StatusIdle {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if got == nil || got.Status != session.StatusWaiting || got.StatusDetail != "idle" {
-		t.Errorf("idle inference: status=%q detail=%q, want waiting/idle", got.Status, got.StatusDetail)
+	if got == nil || got.Status != session.StatusIdle || got.StatusDetail != "" {
+		t.Errorf("idle inference: status=%q detail=%q, want idle with no detail", got.Status, got.StatusDetail)
 	}
 
 	k, _ := net.Dial("unix", sock)

@@ -16,7 +16,7 @@ func TestOsascriptArgsEscaping(t *testing.T) {
 
 func TestSendNeverPanics(t *testing.T) {
 	// On CI the platform tool may be absent; Send must just return nil.
-	if err := Send("xanax test", "body"); err != nil {
+	if err := Send("rvr test", "body"); err != nil {
 		t.Logf("Send returned %v (acceptable if tool present but headless)", err)
 	}
 }

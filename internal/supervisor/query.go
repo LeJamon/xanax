@@ -7,7 +7,7 @@ import (
 )
 
 // withStableTerm forces a widely-supported terminal type on the harness so it
-// emits standard escape sequences regardless of where xanax was launched. A
+// emits standard escape sequences regardless of where rvr was launched. A
 // harness that inherits e.g. TERM=xterm-ghostty emits Ghostty-specific
 // sequences that break in other terminals (and it runs inside a bare PTY, not a
 // real emulator). xterm-256color + COLORTERM=truecolor keeps 24-bit color while

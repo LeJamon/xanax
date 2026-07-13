@@ -9,6 +9,23 @@ import (
 	"testing"
 )
 
+func TestSelectVersion(t *testing.T) {
+	tests := []struct {
+		injected string
+		module   string
+		want     string
+	}{
+		{injected: "v1.2.3", module: "v9.9.9", want: "1.2.3"},
+		{injected: "0.1.0-dev", module: "v1.2.3", want: "1.2.3"},
+		{injected: "0.1.0-dev", module: "(devel)", want: "0.1.0-dev"},
+	}
+	for _, tt := range tests {
+		if got := selectVersion(tt.injected, tt.module); got != tt.want {
+			t.Errorf("selectVersion(%q, %q) = %q, want %q", tt.injected, tt.module, got, tt.want)
+		}
+	}
+}
+
 func TestRootUnknownCommandSuggestsList(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{"lst"})
@@ -19,7 +36,7 @@ func TestRootUnknownCommandSuggestsList(t *testing.T) {
 	}
 	got := err.Error()
 	for _, want := range []string{
-		`unknown command "lst" for "xanax"`,
+		`unknown command "lst" for "rvr"`,
 		"Did you mean this?",
 		"\tlist",
 	} {
@@ -34,14 +51,14 @@ func TestRootUnknownCommandSuggestsList(t *testing.T) {
 
 func TestRootUnknownCommandWithoutSuggestion(t *testing.T) {
 	cmd := newRootCmd()
-	cmd.SetArgs([]string{"definitely-not-a-xanax-command"})
+	cmd.SetArgs([]string{"definitely-not-an-rvr-command"})
 
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("Execute succeeded, want unknown command error")
 	}
 	got := err.Error()
-	if !strings.Contains(got, `unknown command "definitely-not-a-xanax-command" for "xanax"`) {
+	if !strings.Contains(got, `unknown command "definitely-not-an-rvr-command" for "rvr"`) {
 		t.Fatalf("error %q does not contain unknown command message", got)
 	}
 	if strings.Contains(got, "Did you mean") {
@@ -94,7 +111,7 @@ func TestListAliasesExecuteListCommand(t *testing.T) {
 			if err := cmd.Execute(); err != nil {
 				t.Fatalf("%s returned error: %v", alias, err)
 			}
-			want := "No sessions. Start one with: xanax new \"your prompt\"\n"
+			want := "No sessions. Start one with: rvr new \"your prompt\"\n"
 			if got := out.String(); got != want {
 				t.Fatalf("%s output = %q, want %q", alias, got, want)
 			}
