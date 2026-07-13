@@ -431,11 +431,12 @@ configured `interact_exit_key` for returning to the dashboard.
 - Each row: status glyph, title, short session ID, harness, repo name, relative
   age, and (for waiting sessions) the status detail.
 The sessions and the **prompt box** form one navigable column; the prompt box is the
-last row. `↑`/`↓` move the selection. `k`/`j` are vim-style aliases while a
-session row is selected, and type normally in the prompt box. The selected row is
-framed with full-width top and bottom rules (no left/right sides) in the
-navigation accent color; the prompt box shows the same rules in grey when it is
-not the selected row.
+last row. When the prompt is empty, `↑`/`↓` move the selection. `k`/`j` are
+vim-style aliases while a session row is selected. While the prompt contains
+text, `↑`/`↓` move its cursor between rows without leaving the box, and Esc clears
+the draft. The selected row is framed with full-width top and bottom rules (no
+left/right sides) in the navigation accent color; the prompt box shows the same
+rules in grey when it is not the selected row.
 
 - **Prompt box selected:** typed/pasted text goes into it; **Enter** launches a new
   session in the selected harness (current repo, no attach, so you can fire off
@@ -448,7 +449,7 @@ not the selected row.
   delivered verbatim; interactive syntax belongs to the harness). **Tab** opens the
   harness picker: a list of all configured harnesses (`↑`/`↓` + Enter, Esc cancels) —
   scales to any number of harnesses. The composer label always names the harness the
-  next session will use. `↑` moves up into the sessions.
+  next session will use. When the prompt is empty, `↑` moves up into the sessions.
 - **A session selected:** you are not typing, so action keys act on it — `→`/`Enter`
   open a live window, or inspect stored logs for a terminal session without
   relaunching it. `l` shows the stored log, `space` toggles a live peek and falls
@@ -463,8 +464,10 @@ not the selected row.
   table in the config (§8) remaps any of them, and the footer hints follow suit.
   Only the interact-mode detach key lives elsewhere (`interact_exit_key`), since
   it is read inside the raw passthrough rather than the dashboard. `quit` is
-  resolved before any mode and `up`/`down` before the session list and composer,
-  so a key bound to one of those wins over a context action bound to the same key.
+  resolved before any mode and `up`/`down` before the session list. In the
+  composer, `up`/`down` move the selection only when the draft is empty; otherwise
+  the textarea handles them. A navigation binding wins over a session context
+  action bound to the same key.
 - **Keybindings editor** (`s`): a centered, searchable modal — the same style as
   the harness picker — listing every action with its current keys. `↑`/`↓` move and
   Enter starts a capture for the highlighted action; then press one or more keys

@@ -57,9 +57,11 @@ Session IDs accept unique prefixes (git-style).
 
 ### Navigation
 
-The sessions and the prompt box form one column. `↑`/`↓` move the selection;
-`k`/`j` are vim-style aliases while a session is selected, and type normally in
-the prompt box. The selected row is framed with accent-colored top/bottom rules.
+The sessions and the prompt box form one column. When the prompt is empty,
+`↑`/`↓` move the selection; `k`/`j` are vim-style aliases while a session is
+selected. While the prompt contains text, `↑`/`↓` move its cursor between rows
+without leaving the box, and **Esc** clears the draft. The selected row is framed
+with accent-colored top/bottom rules.
 
 - **Prompt box selected** (bottom row): type/paste a prompt and press **Enter** to
   launch a new session in the background (fire off several), or **Ctrl+O** to launch

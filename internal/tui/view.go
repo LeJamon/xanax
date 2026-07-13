@@ -749,6 +749,10 @@ func (m model) footer() string {
 			hint = fmt.Sprintf("type to search · %s move · %s rebind · %s close",
 				updown, keyHint(k.Confirm), keyHint(k.Cancel))
 		}
+	case m.onComposer && m.composer.Value() != "":
+		hint = fmt.Sprintf("%s launch · %s launch+attach · %s harness (+ add) · ↑/↓ cursor · %s clear · %s quit",
+			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),
+			keyHint(k.Cancel), keyHint(k.Quit))
 	case m.onComposer:
 		hint = fmt.Sprintf("%s launch · %s launch+attach · %s harness (+ add) · %s sessions · %s quit",
 			keyHint(k.Confirm), keyHint(k.LaunchAttach), keyHint(k.HarnessPicker),

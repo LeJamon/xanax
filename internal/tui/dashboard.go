@@ -47,9 +47,10 @@ type Deps struct {
 }
 
 // model treats the session list and the prompt box as one navigable column.
-// The arrow keys always move the selection; the prompt box (last row) only
-// accepts text while it is the selected row. When a session is selected, action
-// bindings act on it instead of typing into the composer.
+// The arrow keys move the selection while the prompt box is empty; with a draft
+// they move its text cursor instead. The prompt box (last row) only accepts text
+// while selected. When a session is selected, action bindings act on it instead
+// of typing into the composer.
 type model struct {
 	deps     Deps
 	composer textarea.Model
@@ -519,9 +520,9 @@ func (m model) dispatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.onComposer {
 		switch {
-		case keyMatches(m.keys().Up, msg) && !textInputKey(msg):
+		case keyMatches(m.keys().Up, msg) && !textInputKey(msg) && m.composer.Value() == "":
 			return m.moveUp()
-		case keyMatches(m.keys().Down, msg) && !textInputKey(msg):
+		case keyMatches(m.keys().Down, msg) && !textInputKey(msg) && m.composer.Value() == "":
 			return m.moveDown()
 		}
 		return m.updateComposerKey(msg)
@@ -596,10 +597,15 @@ func (m model) closeMovedPreview(prevID string) model {
 // new session in the background; Ctrl+O (or Alt+Enter) launches and attaches
 // immediately — landing in the harness's own input, where its native syntax
 // (/commands, @files, completions) is fully available. Tab opens the harness
-// picker. Everything else edits the prompt.
+// picker. Cancel clears the prompt. Everything else edits the prompt, including
+// Up/Down while it contains text so multiline cursor navigation stays local.
 func (m model) updateComposerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := m.keys()
 	switch {
+	case keyMatches(k.Cancel, msg):
+		m.composer.Reset()
+		m.syncComposerHeight()
+		return m, nil
 	case keyMatches(k.HarnessPicker, msg):
 		// Always open the picker — even with one (or zero) harnesses it is the
 		// only way to reach the '+' add-harness form. It opens with the search box

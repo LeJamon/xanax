@@ -164,6 +164,69 @@ func TestArrowNavigationBetweenSessionsAndComposer(t *testing.T) {
 	}
 }
 
+func TestComposerArrowsMoveWithinText(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m.composer.SetValue("first row\nsecond row")
+	m.reflowComposer()
+	if line := m.composer.Line(); line != 1 {
+		t.Fatalf("initial composer line = %d, want 1", line)
+	}
+
+	m = send(m, "up")
+	if !m.onComposer {
+		t.Fatal("up with composer text moved selection to a session")
+	}
+	if line := m.composer.Line(); line != 0 {
+		t.Fatalf("composer line after up = %d, want 0", line)
+	}
+
+	m = send(m, "down")
+	if !m.onComposer {
+		t.Fatal("down with composer text moved selection to a session")
+	}
+	if line := m.composer.Line(); line != 1 {
+		t.Fatalf("composer line after down = %d, want 1", line)
+	}
+	if got := m.composer.Value(); got != "first row\nsecond row" {
+		t.Errorf("composer value changed during arrow navigation: %q", got)
+	}
+}
+
+func TestComposerCancelClearsTextAndResetsHeight(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m.composer.SetValue("first row\nsecond row")
+	m.reflowComposer()
+	if height := m.composer.Height(); height <= 1 {
+		t.Fatalf("composer height before cancel = %d, want more than 1", height)
+	}
+
+	m = send(m, "esc")
+	if !m.onComposer {
+		t.Fatal("cancel moved selection away from the composer")
+	}
+	if got := m.composer.Value(); got != "" {
+		t.Errorf("composer after cancel = %q, want empty", got)
+	}
+	if height := m.composer.Height(); height != 1 {
+		t.Errorf("composer height after cancel = %d, want 1", height)
+	}
+}
+
+func TestComposerFooterReflectsDraftArrowBehavior(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	if foot := m.footer(); !strings.Contains(foot, "↑ sessions") {
+		t.Fatalf("empty-composer footer should advertise session navigation: %q", foot)
+	}
+
+	m.composer.SetValue("draft")
+	foot := m.footer()
+	for _, want := range []string{"↑/↓ cursor", "esc clear"} {
+		if !strings.Contains(foot, want) {
+			t.Errorf("draft footer missing %q: %q", want, foot)
+		}
+	}
+}
+
 func TestVimNavigationKeysMoveSelection(t *testing.T) {
 	m := selectSession(newTestModel(sampleSessions()), 1)
 	m = send(m, "k")
