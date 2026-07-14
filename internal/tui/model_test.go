@@ -456,6 +456,44 @@ func TestRemoveConfirmationDisarmsOnOtherKey(t *testing.T) {
 	if m.confirmRemoveID != "" {
 		t.Errorf("non-remove key did not disarm confirmation: %q", m.confirmRemoveID)
 	}
+	if foot := stripANSI(m.footer()); strings.Contains(foot, "kill and remove live0002") {
+		t.Errorf("footer retained stale remove confirmation: %q", foot)
+	}
+}
+
+func TestRemoveConfirmationDisarmsOnWheelNavigation(t *testing.T) {
+	sessions := []*session.Session{
+		{ID: "live0003", Title: "first", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning},
+		{ID: "live0004", Title: "second", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning},
+	}
+	m := selectSession(newTestModel(sessions), 0)
+
+	next, cmd := m.Update(key("ctrl+x"))
+	m = next.(model)
+	if cmd != nil || m.confirmRemoveID != "live0003" {
+		t.Fatalf("first remove did not arm confirmation: cmd=%v id=%q", cmd, m.confirmRemoveID)
+	}
+
+	m = sendWheel(m, tea.MouseButtonWheelDown)
+	if got := m.selectedID(); got != "live0004" {
+		t.Fatalf("wheel selected %q, want live0004", got)
+	}
+	if m.confirmRemoveID != "" {
+		t.Errorf("wheel navigation did not disarm confirmation: %q", m.confirmRemoveID)
+	}
+	if foot := stripANSI(m.footer()); strings.Contains(foot, "kill and remove live0003") {
+		t.Errorf("footer retained stale remove confirmation: %q", foot)
+	}
+
+	m = sendWheel(m, tea.MouseButtonWheelUp)
+	next, cmd = m.Update(key("ctrl+x"))
+	m = next.(model)
+	if cmd != nil {
+		t.Fatal("remove executed immediately after wheel navigation returned to the original session")
+	}
+	if m.confirmRemoveID != "live0003" {
+		t.Errorf("remove confirmation was not re-armed: %q", m.confirmRemoveID)
+	}
 }
 
 func TestKillFailureDoesNotDeleteSession(t *testing.T) {

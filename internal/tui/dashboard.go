@@ -506,7 +506,8 @@ func (m model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	prev := m.selectedID()
 	m = m.scrollSessions(delta)
-	return m.closeMovedPreview(prev), nil
+	m = m.closeMovedPreview(prev)
+	return m.clearStaleRemoveConfirm(), nil
 }
 
 // scrollSessions moves the list viewport without wrapping through the composer.
@@ -1001,7 +1002,6 @@ func (m model) confirmOrRemove(s *session.Session) (tea.Model, tea.Cmd) {
 	force := m.confirmRemoveID == s.ID
 	if m.removeNeedsConfirm(s) && !force {
 		m.confirmRemoveID = s.ID
-		m.status = "press " + keyHint(m.keys().Remove) + " again to kill and remove " + shortID(s.ID)
 		return m, nil
 	}
 	m.confirmRemoveID = ""
@@ -1199,10 +1199,7 @@ func (m model) execKillRemove(s *session.Session, force bool) tea.Cmd {
 		if err != nil {
 			var active *sessionctl.ActiveError
 			if errors.As(err, &active) {
-				return actionDoneMsg{
-					status:          "press " + keyHint(m.keys().Remove) + " again to kill and remove " + shortID(id),
-					confirmRemoveID: id,
-				}
+				return actionDoneMsg{confirmRemoveID: id}
 			}
 			return actionDoneMsg{status: "remove failed: " + err.Error()}
 		}
