@@ -88,6 +88,11 @@ func send(m model, k string) model {
 	return next.(model)
 }
 
+func sendWheel(m model, button tea.MouseButton) model {
+	next, _ := m.Update(tea.MouseMsg{Button: button, Action: tea.MouseActionPress})
+	return next.(model)
+}
+
 // selectSession moves selection off the composer onto session index i.
 func selectSession(m model, i int) model {
 	m.onComposer = false
@@ -161,6 +166,92 @@ func TestArrowNavigationBetweenSessionsAndComposer(t *testing.T) {
 	m = send(m, "down") // last session -> composer
 	if !m.onComposer {
 		t.Fatal("down from last session should select the composer")
+	}
+}
+
+func TestMouseWheelScrollsSessionsWithoutEditingComposer(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m.composer.SetValue("first row\nsecond row")
+	value := m.composer.Value()
+	line := m.composer.Line()
+	column := m.composer.LineInfo().ColumnOffset
+
+	m = sendWheel(m, tea.MouseButtonWheelUp)
+	if m.onComposer || m.cursor != len(m.sessions)-1 {
+		t.Fatalf("wheel up did not enter the list at its bottom: onComposer=%v cursor=%d", m.onComposer, m.cursor)
+	}
+	if m.composer.Value() != value || m.composer.Line() != line || m.composer.LineInfo().ColumnOffset != column {
+		t.Errorf("wheel edited composer: value=%q line=%d column=%d", m.composer.Value(), m.composer.Line(), m.composer.LineInfo().ColumnOffset)
+	}
+
+	m = sendWheel(m, tea.MouseButtonWheelUp)
+	if m.cursor != len(m.sessions)-2 {
+		t.Errorf("second wheel up cursor = %d, want %d", m.cursor, len(m.sessions)-2)
+	}
+	if m.composer.Value() != value || m.composer.Line() != line {
+		t.Error("wheel navigation changed the preserved prompt draft")
+	}
+
+	m = sendWheel(m, tea.MouseButtonWheelDown)
+	if m.cursor != len(m.sessions)-1 || m.onComposer {
+		t.Errorf("wheel down cursor = %d onComposer=%v, want last session selected", m.cursor, m.onComposer)
+	}
+}
+
+func TestMouseWheelScrollsLongSessionViewport(t *testing.T) {
+	m := newTestModel(manyRunningSessions(30))
+	m = sendWheel(m, tea.MouseButtonWheelUp)
+	for range 3 {
+		m = sendWheel(m, tea.MouseButtonWheelUp)
+	}
+
+	if m.cursor != 26 {
+		t.Fatalf("wheel cursor = %d, want 26", m.cursor)
+	}
+	out := stripANSI(m.renderList(9))
+	for _, want := range []string{"session 26", "more sessions above"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("wheel-scrolled list missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestMouseWheelRoutesToActiveModalList(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	m.picking = true
+	m.pickIdx = 0
+	m = sendWheel(m, tea.MouseButtonWheelDown)
+	if m.pickIdx != 1 {
+		t.Errorf("picker wheel index = %d, want 1", m.pickIdx)
+	}
+
+	m.picking = false
+	m.settingsOn = true
+	m.settingsIdx = 0
+	m = sendWheel(m, tea.MouseButtonWheelDown)
+	if m.settingsIdx != 1 {
+		t.Errorf("settings wheel index = %d, want 1", m.settingsIdx)
+	}
+
+	m.settingsCapture = true
+	m = sendWheel(m, tea.MouseButtonWheelDown)
+	if m.settingsIdx != 1 {
+		t.Errorf("wheel moved settings selection during key capture: %d", m.settingsIdx)
+	}
+}
+
+func TestMouseIgnoresClicksAndHorizontalWheel(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	for _, msg := range []tea.MouseMsg{
+		{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress},
+		{Button: tea.MouseButtonWheelLeft, Action: tea.MouseActionPress},
+		{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionRelease},
+	} {
+		next, _ := m.Update(msg)
+		got := next.(model)
+		if !got.onComposer || got.cursor != m.cursor || got.composer.Value() != m.composer.Value() {
+			t.Fatalf("irrelevant mouse event changed model: %+v", msg)
+		}
 	}
 }
 
@@ -1762,6 +1853,14 @@ func TestPreviewClosesOnMoveUpAndFilterNarrow(t *testing.T) {
 	}
 	if m2.previewOn || m2.renderPreview() != "" {
 		t.Error("filter narrowing away the peeked session should close the preview")
+	}
+
+	m3 := selectSession(newTestModel(sampleSessions()), 1)
+	m3 = send(m3, "space")
+	next3, _ := m3.Update(matchingPreviewMsg(m3, m3.selectedID(), "peek"))
+	m3 = sendWheel(next3.(model), tea.MouseButtonWheelUp)
+	if m3.previewOn || m3.renderPreview() != "" {
+		t.Error("mouse-wheel move should close the preview")
 	}
 }
 

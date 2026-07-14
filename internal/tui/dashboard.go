@@ -202,7 +202,7 @@ func Run(deps Deps) error {
 		searchFocused: false,
 		settingsInput: gi,
 	}
-	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 
@@ -467,8 +467,66 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.updateKey(msg)
+
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
 	}
 	return m, nil
+}
+
+// updateMouse routes vertical wheel events to the visible list. Capturing the
+// mouse prevents terminals from translating wheel ticks into Up/Down keys,
+// which would otherwise move the cursor inside a focused multiline composer.
+func (m model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	delta := 0
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		delta = -1
+	case tea.MouseButtonWheelDown:
+		delta = 1
+	default:
+		return m, nil
+	}
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+
+	switch {
+	case m.picking:
+		m.movePick(delta)
+		return m, nil
+	case m.settingsOn:
+		if !m.settingsCapture {
+			m.moveSettings(delta)
+		}
+		return m, nil
+	case m.renaming, m.addingHarness:
+		return m, nil
+	}
+
+	prev := m.selectedID()
+	m = m.scrollSessions(delta)
+	return m.closeMovedPreview(prev), nil
+}
+
+// scrollSessions moves the list viewport without wrapping through the composer.
+// Scrolling up from the composer enters the list at its bottom; the prompt text
+// and edit position remain intact.
+func (m model) scrollSessions(delta int) model {
+	if len(m.sessions) == 0 || delta == 0 {
+		return m
+	}
+	if m.onComposer {
+		if delta > 0 {
+			return m
+		}
+		m.onComposer = false
+		m.cursor = len(m.sessions) - 1
+		m.composer.Blur()
+		return m
+	}
+	m.cursor = min(max(m.cursor+delta, 0), len(m.sessions)-1)
+	return m
 }
 
 func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
