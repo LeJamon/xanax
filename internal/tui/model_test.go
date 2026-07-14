@@ -216,6 +216,25 @@ func TestMouseWheelScrollsLongSessionViewport(t *testing.T) {
 	}
 }
 
+func TestInteractiveCompletionReenablesMouseCapture(t *testing.T) {
+	m := newTestModel(sampleSessions())
+	next, cmd := m.Update(interactiveDoneMsg(actionDoneMsg{status: "returned from attach"}))
+	if cmd == nil {
+		t.Fatal("interactive completion returned no command")
+	}
+	if got := next.(model).status; got != "returned from attach" {
+		t.Errorf("status = %q, want interactive return status", got)
+	}
+
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) < 1 {
+		t.Fatalf("interactive completion command = %T, want non-empty tea.BatchMsg", cmd())
+	}
+	if got, want := fmt.Sprintf("%T", batch[0]()), fmt.Sprintf("%T", tea.EnableMouseCellMotion()); got != want {
+		t.Errorf("first interactive completion command produced %s, want %s", got, want)
+	}
+}
+
 func TestMouseWheelRoutesToActiveModalList(t *testing.T) {
 	m := newTestModel(sampleSessions())
 	m.picking = true
@@ -493,6 +512,34 @@ func TestRemoveConfirmationDisarmsOnWheelNavigation(t *testing.T) {
 	}
 	if m.confirmRemoveID != "live0003" {
 		t.Errorf("remove confirmation was not re-armed: %q", m.confirmRemoveID)
+	}
+}
+
+func TestLateRemoveConfirmationIgnoredAfterWheelNavigation(t *testing.T) {
+	sessions := []*session.Session{
+		{ID: "live0005", Title: "first", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning},
+		{ID: "live0006", Title: "second", RepoPath: "/x", Harness: "opencode", Status: session.StatusRunning},
+	}
+	m := selectSession(newTestModel(sessions), 0)
+	m = sendWheel(m, tea.MouseButtonWheelDown)
+
+	next, _ := m.Update(actionDoneMsg{confirmRemoveID: "live0005"})
+	m = next.(model)
+	if got := m.selectedID(); got != "live0006" {
+		t.Fatalf("selected session = %q, want live0006", got)
+	}
+	if m.confirmRemoveID != "" {
+		t.Errorf("late remove response re-armed stale confirmation: %q", m.confirmRemoveID)
+	}
+	if foot := stripANSI(m.footer()); strings.Contains(foot, "kill and remove live0005") {
+		t.Errorf("footer showed late remove confirmation: %q", foot)
+	}
+
+	m = sendWheel(m, tea.MouseButtonWheelUp)
+	next, cmd := m.Update(key("ctrl+x"))
+	m = next.(model)
+	if cmd != nil || m.confirmRemoveID != "live0005" {
+		t.Fatalf("remove did not require fresh confirmation: cmd=%v id=%q", cmd, m.confirmRemoveID)
 	}
 }
 
