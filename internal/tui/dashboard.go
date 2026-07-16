@@ -161,6 +161,11 @@ type actionDoneMsg struct {
 	confirmRemoveID string
 }
 
+// interactiveDoneMsg marks completion of a command that temporarily owned the
+// terminal. Bubble Tea disables mouse reporting while releasing the terminal
+// but does not restore it when the command exits, so Update must re-enable it.
+type interactiveDoneMsg actionDoneMsg
+
 // Run starts the dashboard event loop.
 func Run(deps Deps) error {
 	applyTheme(deps.Cfg.Theme) // rebuild styles from the configured theme
@@ -453,17 +458,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case interactiveDoneMsg:
+		m = m.applyActionDone(actionDoneMsg(msg))
+		return m, tea.Batch(tea.EnableMouseCellMotion, m.reload())
+
 	case actionDoneMsg:
-		m.status = msg.status
-		m.confirmRemoveID = msg.confirmRemoveID
-		// Put a would-be-lost prompt back, but only if the box is empty — a
-		// background launch stays interactive, so the user may have started
-		// typing something new we must not clobber.
-		if msg.restorePrompt != "" && m.composer.Value() == "" {
-			m.composer.SetValue(msg.restorePrompt)
-			m.reflowComposer()
-		}
-		return m, m.reload()
+		return m.applyActionDone(msg), m.reload()
 
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -1079,7 +1079,7 @@ func (m model) updateRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // resume). Bubble Tea releases and restores the terminal around it.
 func (m model) execInteractive(sub string, arg string) tea.Cmd {
 	c := exec.Command(m.deps.SelfPath, sub, arg)
-	return execAttachProcess(c, func(err error, result attach.Result, reported bool) tea.Msg {
+	return execAttachProcess(c, func(err error, result attach.Result, reported bool) actionDoneMsg {
 		if err != nil {
 			return actionDoneMsg{status: fmt.Sprintf("%s failed: %v", sub, err)}
 		}
@@ -1092,12 +1092,15 @@ func (m model) execInteractive(sub string, arg string) tea.Cmd {
 
 func execAttachProcess(
 	c *exec.Cmd,
-	done func(error, attach.Result, bool) tea.Msg,
+	done func(error, attach.Result, bool) actionDoneMsg,
 ) tea.Cmd {
+	finish := func(err error, result attach.Result, reported bool) tea.Msg {
+		return interactiveDoneMsg(done(err, result, reported))
+	}
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		return tea.ExecProcess(c, func(runErr error) tea.Msg {
-			return done(runErr, attach.Disconnected, false)
+			return finish(runErr, attach.Disconnected, false)
 		})
 	}
 	fd := 3 + len(c.ExtraFiles)
@@ -1107,7 +1110,7 @@ func execAttachProcess(
 		_ = writer.Close()
 		if runErr != nil {
 			_ = reader.Close()
-			return done(runErr, attach.Disconnected, false)
+			return finish(runErr, attach.Disconnected, false)
 		}
 		_ = reader.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 		data := make([]byte, 32)
@@ -1115,8 +1118,22 @@ func execAttachProcess(
 		_ = reader.Close()
 		result, reported := attach.ParseResult(data[:n])
 		reported = reported && (readErr == nil || n > 0)
-		return done(runErr, result, reported)
+		return finish(runErr, result, reported)
 	})
+}
+
+func (m model) applyActionDone(msg actionDoneMsg) model {
+	m.status = msg.status
+	m.confirmRemoveID = msg.confirmRemoveID
+	m = m.clearStaleRemoveConfirm()
+	// Put a would-be-lost prompt back, but only if the box is empty — a
+	// background launch stays interactive, so the user may have started typing
+	// something new we must not clobber.
+	if msg.restorePrompt != "" && m.composer.Value() == "" {
+		m.composer.SetValue(msg.restorePrompt)
+		m.reflowComposer()
+	}
+	return m
 }
 
 func setProcessEnv(env []string, key, value string) []string {
@@ -1242,7 +1259,7 @@ func (m model) execNewBackground(prompt string) tea.Cmd {
 func (m model) execNewAttach(prompt string) tea.Cmd {
 	known, tracking := m.snapshotSessionIDs()
 	c := exec.Command(m.deps.SelfPath, newSessionArgs(m.harness(), m.deps.Scope, prompt, true)...)
-	return execAttachProcess(c, func(err error, result attach.Result, reported bool) tea.Msg {
+	return execAttachProcess(c, func(err error, result attach.Result, reported bool) actionDoneMsg {
 		if err != nil {
 			return actionDoneMsg{status: "launch failed: " + err.Error(), restorePrompt: prompt}
 		}
