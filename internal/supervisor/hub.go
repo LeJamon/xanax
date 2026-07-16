@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	clientQueueDepth = 256
-	outputChunkSize  = 32 * 1024
-	exitFlushTimeout = 2 * time.Second
+	clientQueueDepth     = 256
+	outputChunkSize      = 32 * 1024
+	exitFlushTimeout     = 2 * time.Second
+	alternateScreenEnter = "\x1b[?1049h"
 )
 
 // client is one attached connection. A dedicated writer goroutine drains out,
@@ -74,14 +75,15 @@ func (cl *client) writeLoop() {
 // registered client's snapshot is consistent with the live stream (no gaps,
 // no duplication).
 type hub struct {
-	mu      sync.Mutex
-	clients map[*client]struct{}
-	ring    *ringbuf.Ring
-	screen  *screen
-	modes   map[int]bool // sticky DEC modes the harness enabled (mouse, ...)
-	info    wire.Info
-	state   wire.State
-	exit    *wire.Exit
+	mu              sync.Mutex
+	clients         map[*client]struct{}
+	ring            *ringbuf.Ring
+	screen          *screen
+	modes           map[int]bool // sticky DEC modes the harness enabled (mouse, ...)
+	alternateScreen bool
+	info            wire.Info
+	state           wire.State
+	exit            *wire.Exit
 }
 
 func newHub(ring *ringbuf.Ring, scr *screen, info wire.Info) *hub {
@@ -100,6 +102,7 @@ func newHub(ring *ringbuf.Ring, scr *screen, info wire.Info) *hub {
 func (h *hub) broadcastOutput(p []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.alternateScreen = updateAltScreen(h.alternateScreen, p)
 	h.screen.write(p)
 	h.ring.Write(p)
 	observeModes(h.modes, p)
@@ -174,14 +177,23 @@ func (h *hub) broadcastExitWithin(e wire.Exit, timeout time.Duration) {
 // For a full-screen TUI (detected alt-screen or configured full_screen) the ring
 // holds interleaved cursor-addressed diff frames that garble when replayed, and
 // the app will not repaint unchanged cells, so the client receives an exact
-// snapshot of the emulator's screen.
-func (h *hub) register(cl *client, snapshotReplay bool) {
+// snapshot of the emulator's screen. When the harness is actually using the
+// alternate screen, restore that mode before painting the rendered snapshot;
+// the snapshot intentionally contains rendered state rather than raw mode
+// transitions. Config-only snapshot replay stays on the main screen so inline
+// harnesses retain native terminal scrollback. Alternate-screen state is
+// tracked under the same lock as the emulator so the mode and snapshot cannot
+// describe different points in the output stream.
+func (h *hub) register(cl *client, configuredFullScreen bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	cl.enqueue(jsonFrame(wire.TypeHello, h.info))
 	primer := h.ring.Snapshot()
-	if snapshotReplay {
+	if h.alternateScreen || configuredFullScreen {
 		primer = h.screen.snapshot()
+		if h.alternateScreen {
+			primer = append([]byte(alternateScreenEnter), primer...)
+		}
 	}
 	// Re-enable sticky modes (mouse, bracketed paste, focus) the harness set —
 	// the previous detach reset them on the client's terminal.

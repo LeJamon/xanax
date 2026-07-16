@@ -28,9 +28,10 @@ func TestRunResetsTerminalModesOnDetach(t *testing.T) {
 	}
 }
 
-// TestRunStartsOnCleanSessionScreen verifies a new attachment clears away the
-// previous terminal contents before any supervisor output arrives.
-func TestRunStartsOnCleanSessionScreen(t *testing.T) {
+// TestRunStartsOnScrollableCleanScreen verifies a new attachment clears away
+// the visible terminal contents without entering the alternate screen. Keeping
+// the main screen active lets inline harnesses retain native scrollback.
+func TestRunStartsOnScrollableCleanScreen(t *testing.T) {
 	out, res := runAttachTest(t)
 	if res != Detached {
 		t.Fatalf("Run returned %v, want Detached", res)
@@ -38,8 +39,11 @@ func TestRunStartsOnCleanSessionScreen(t *testing.T) {
 	if !bytes.HasPrefix(out, enterSessionScreen) {
 		t.Fatalf("attach did not start with clean session screen; got %q", out)
 	}
-	if !bytes.Contains(out, []byte("\x1b[?1049h")) || !bytes.Contains(out, []byte("\x1b[2J")) {
-		t.Errorf("clean screen primer is missing alternate-screen or clear-screen; got %q", out)
+	if !bytes.Contains(enterSessionScreen, []byte("\x1b[2J")) {
+		t.Errorf("clean screen primer is missing clear-screen; got %q", enterSessionScreen)
+	}
+	if bytes.Contains(enterSessionScreen, []byte("\x1b[?1049h")) {
+		t.Errorf("clean screen primer entered alternate screen and disabled native scrollback; got %q", enterSessionScreen)
 	}
 	if bytes.Contains(enterSessionScreen, []byte("\x1b[?25l")) {
 		t.Fatal("clean screen primer must not hide the cursor; line-based sessions may not show it again")

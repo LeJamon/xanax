@@ -38,13 +38,14 @@ var resetModes = []byte("" +
 	"\x1b[?1049l" + // leave the alternate screen
 	"\x1b[0m\x1b[?25h") // reset attributes, show cursor
 
-// enterSessionScreen gives each attach a private, blank screen before any
-// replay or live output arrives. Without this, a slow-starting or line-based
-// session can leave visible pixels from the dashboard or a previous session.
+// enterSessionScreen gives each attach a blank screen before any replay or live
+// output arrives. Keep the terminal on its main screen so inline harnesses can
+// build native scrollback as their conversation grows. Harnesses that request
+// the alternate screen retain that mode through live output and snapshot replay.
 //
 // Leave cursor visibility alone here: full-screen snapshots manage it while
 // painting, and line-based sessions may not replay a later cursor-show sequence.
-var enterSessionScreen = []byte("\x1b[?1049h\x1b[0m\x1b[2J\x1b[H")
+var enterSessionScreen = []byte("\x1b[0m\x1b[2J\x1b[H")
 
 // Result explains why Run returned.
 type Result int

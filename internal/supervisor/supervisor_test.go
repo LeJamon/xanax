@@ -17,6 +17,8 @@ import (
 	"github.com/LeJamon/rvr/internal/wire"
 )
 
+const testAlternateScreenEnter = "\x1b[?1049h"
+
 func testPaths(t *testing.T) config.Paths {
 	t.Helper()
 	data := t.TempDir()
@@ -195,16 +197,22 @@ func TestAttachFullScreenReplaysSnapshot(t *testing.T) {
 		}
 	}
 
-	if !bytes.Contains(got, []byte("\x1b[2J")) {
+	clearScreen := bytes.Index(got, []byte("\x1b[2J"))
+	if clearScreen < 0 {
 		t.Errorf("snapshot did not start with a clear-screen; got %.200q", got)
+	}
+	altScreen := bytes.Index(got, []byte(testAlternateScreenEnter))
+	if altScreen < 0 || altScreen > clearScreen {
+		t.Errorf("snapshot did not restore alternate-screen mode before painting; got %.200q", got)
 	}
 	// The snapshot must carry the frame content (rendered from the emulator)...
 	if !bytes.Contains(got, []byte("HISTORICALFRAME")) {
 		t.Errorf("snapshot missing the screen content; got %.200q", got)
 	}
-	// ...but must not be a raw replay of the app's boot output.
-	if bytes.Contains(got, []byte("\x1b[?1049h")) {
-		t.Errorf("attach replayed raw output instead of a snapshot; got %.200q", got)
+	// ...and the harness's historical enter sequence is replaced by exactly one
+	// synthetic enter before the rendered snapshot.
+	if count := bytes.Count(got, []byte(testAlternateScreenEnter)); count != 1 {
+		t.Errorf("alternate-screen enter count = %d, want one synthetic enter; got %.200q", count, got)
 	}
 
 	wire.WriteJSON(conn, wire.TypeKill, struct{}{})
@@ -265,6 +273,9 @@ func TestAttachConfiguredFullScreenReplaysSnapshotWithoutAltScreen(t *testing.T)
 	}
 	if bytes.Contains(got, []byte("RAW-HISTORY-ONLY")) {
 		t.Errorf("configured full-screen attach replayed raw history; got %.200q", got)
+	}
+	if bytes.Contains(got, []byte(testAlternateScreenEnter)) {
+		t.Errorf("configured full-screen attach forced alternate-screen mode; got %.200q", got)
 	}
 
 	wire.WriteJSON(conn, wire.TypeKill, struct{}{})

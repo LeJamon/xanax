@@ -86,12 +86,8 @@ type Supervisor struct {
 
 	// Generic state inference (active only when the adapter has no state
 	// channel and the harness configured it).
-	infer *inferer
-	// altScreen is true when the harness has switched to the alternate screen
-	// buffer (i.e. it is a full-screen TUI). Attaching clients then get a clean
-	// repaint instead of a replay of stale frames (SPEC.md §4).
-	altScreen atomic.Bool
-	exited    chan struct{}
+	infer  *inferer
+	exited chan struct{}
 
 	// stateInfo is written only by watchState and read by run after wg.Wait,
 	// so the happens-before from wg makes extra locking unnecessary.
@@ -274,7 +270,6 @@ func (s *Supervisor) pumpOutput() {
 			carry = append([]byte(nil), rest...)
 			if len(emit) > 0 {
 				s.answerTerminalQueries(emit)
-				s.altScreen.Store(updateAltScreen(s.altScreen.Load(), emit))
 				s.rawLog.Write(emit)
 				s.hub.broadcastOutput(emit)
 				if s.infer != nil {
@@ -290,7 +285,7 @@ func (s *Supervisor) pumpOutput() {
 
 // alt-screen enter/leave control sequences (xterm private modes 1049/1047/47).
 var (
-	altEnterSeqs = [][]byte{[]byte("\x1b[?1049h"), []byte("\x1b[?1047h"), []byte("\x1b[?47h")}
+	altEnterSeqs = [][]byte{[]byte(alternateScreenEnter), []byte("\x1b[?1047h"), []byte("\x1b[?47h")}
 	altLeaveSeqs = [][]byte{[]byte("\x1b[?1049l"), []byte("\x1b[?1047l"), []byte("\x1b[?47l")}
 )
 
@@ -371,7 +366,7 @@ func (s *Supervisor) serveClient(cl *client) {
 		}
 	}
 
-	s.hub.register(cl, s.altScreen.Load() || s.opts.Harness.FullScreen)
+	s.hub.register(cl, s.opts.Harness.FullScreen)
 	defer s.hub.remove(cl)
 
 	for {
